@@ -7,6 +7,15 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# === 新增以下 MSVC 专属配置 ===
+if(MSVC)
+    # 强制编译器以 UTF-8 读取源文件和输出
+    add_compile_options(/utf-8)
+    # 禁用 C 库函数不安全警告 (strncpy)
+    add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
+endif()
+# ===============================
+
 # 设置输出目录结构 (防止编译产物污染源码树)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
