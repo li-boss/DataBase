@@ -1,0 +1,14 @@
+# CMake 构建目录
+build/
+out/
+bin/
+
+# 数据库运行时生成的底层文件
+*.tb
+*.tdf
+*.trd
+*.db
+*.log
+
+# VS Code 配置文件 (可选)
+.vscode/
