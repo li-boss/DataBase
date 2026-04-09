@@ -34,7 +34,7 @@ set(STORAGE_SRC
 
 set(ENGINE_SRC
     # src/engine/record_manager.cpp
-    # src/engine/ddl_executor.cpp
+     src/engine/ddl_executor.cpp
     # src/engine/dml_executor.cpp
 )
 
