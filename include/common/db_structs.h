@@ -1,11 +1,12 @@
 // include/common/db_structs.h
 #pragma once
+
 #include <cstdint>
+#include <cstring>
 
-// 系统常量定义
-constexpr int MAX_NAME_LEN = 128;
+#include "common/db_types.h"   // MAX_NAME_LEN, FieldType, ConstraintFlags
 
-// 字段数据类型映射
+// ─── 核心结构体定义 ──────────────────────────────────────
 enum class FieldType : uint32_t {
     TYPE_INT = 1,
     TYPE_CHAR = 2,
