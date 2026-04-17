@@ -1,6 +1,6 @@
 // src/engine/ddl_executor.cpp
-#include "engine/ddl_executor.h"
-#include "storage/file_manager.h"
+#include "../../include/engine/ddl_executor.h"
+#include "../../include/storage/file_manager.h"
 #include <iostream>
 #include <cstring>
 #include <ctime>

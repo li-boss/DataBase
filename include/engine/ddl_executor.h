@@ -2,7 +2,7 @@
 #pragma once
 #include <string>
 #include <vector>
-#include "common/db_structs.h"
+#include "../common/db_structs.h"
 
 class DDLExecutor {
 public:

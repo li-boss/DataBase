@@ -3,8 +3,8 @@
 #include <cassert>
 #include <cstring>
 #include <filesystem>
-#include "common/db_structs.h"
-#include "storage/file_manager.h"
+#include "../include/common/db_structs.h"
+#include "../include/storage/file_manager.h"
 
 namespace fs = std::filesystem;
 

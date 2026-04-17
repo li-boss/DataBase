@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <cstring>
 
-#include "common/db_types.h"   // MAX_NAME_LEN, FieldType, ConstraintFlags
+#include "db_types.h"            // MAX_NAME_LEN（同目录）
 
 // ─── 核心结构体定义 ──────────────────────────────────────
 enum class FieldType : uint32_t {

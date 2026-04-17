@@ -2,7 +2,7 @@
 #include <iostream>
 #include <vector>
 #include <cstring>
-#include "engine/ddl_executor.h"
+#include "../../include/engine/ddl_executor.h"
 
 // 辅助函数：快速构造字段
 FieldDefinition makeField(const char* name, FieldType type, uint32_t length, uint32_t isPk) {

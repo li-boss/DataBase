@@ -29,7 +29,7 @@ include_directories(${CMAKE_SOURCE_DIR}/include)
 set(STORAGE_SRC
     src/storage/file_manager.cpp
     # src/storage/buffer_pool.cpp
-    # src/storage/dict_manager.cpp
+    src/storage/dict_manager.cpp
 )
 
 set(ENGINE_SRC
@@ -68,6 +68,11 @@ enable_testing()
 add_executable(test_file_io tests/test_file_io.cpp)
 target_link_libraries(test_file_io PRIVATE RuankoCore)
 add_test(NAME Storage_FileIO_Test COMMAND test_file_io)
+
+# 第二阶段：数据字典管理器测试（覆盖 DDL → DictManager 全链路）
+add_executable(test_dict_manager tests/test_dict_manager.cpp)
+target_link_libraries(test_dict_manager PRIVATE RuankoCore)
+add_test(NAME Storage_DictMgr_Test COMMAND test_dict_manager)
 
 # 后续测试用例预留...
 # add_executable(test_record_rw tests/test_record_rw.cpp)
