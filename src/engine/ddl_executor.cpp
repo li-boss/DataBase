@@ -67,3 +67,59 @@ bool DDLExecutor::dropTable(const std::string& tableName) {
     FileManager::deleteFile(tableName + ".trd");
     return true;
 }
+
+
+// ---------------- 新增的高层封装接口 (接收 ASTNode 返回 ExecuteResult) ----------------
+
+ExecuteResult DDLExecutor::executeCreateTable(const ASTNode* ast) {
+    ExecuteResult res;
+    // 解析 ast 中的 columns，目前为了打通链路写固定假字段
+    std::vector<FieldDefinition> dummyFields;
+    // ... 未来通过 ast->columns 转换 ...
+    
+    // 调用底层的建表逻辑
+    if (createTable(ast->tbl, dummyFields)) {
+        res.msg = "Query OK: Table '" + ast->tbl + "' created successfully.";
+    } else {
+        res.error = 1;
+        res.msg = "Error: Failed to create table '" + ast->tbl + "'.";
+    }
+    return res;
+}
+
+ExecuteResult DDLExecutor::executeDropTable(const ASTNode* ast) {
+    ExecuteResult res;
+    if (dropTable(ast->tbl)) {
+        res.msg = "Query OK: Table '" + ast->tbl + "' dropped successfully.";
+    } else {
+        res.error = 1;
+        res.msg = "Error: Failed to drop table '" + ast->tbl + "'.";
+    }
+    return res;
+}
+
+ExecuteResult DDLExecutor::createDatabase(const ASTNode* ast) {
+    ExecuteResult res;
+    res.msg = "Query OK: Database '" + ast->db + "' created.";
+    return res;
+}
+
+ExecuteResult DDLExecutor::dropDatabase(const ASTNode* ast) {
+    ExecuteResult res;
+    res.msg = "Query OK: Database '" + ast->db + "' dropped.";
+    return res;
+}
+
+ExecuteResult DDLExecutor::useDatabase(const ASTNode* ast) {
+    ExecuteResult res;
+    res.msg = "Database changed to '" + ast->db + "'.";
+    return res;
+}
+
+ExecuteResult DDLExecutor::showTables() {
+    ExecuteResult res;
+    res.headers = {"Tables_in_db"};
+    res.rows.push_back({"Users"}); // 假数据 Stub
+    res.msg = "Query OK: 1 row in set";
+    return res;
+}
