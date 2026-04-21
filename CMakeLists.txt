@@ -28,7 +28,7 @@ include_directories(${CMAKE_SOURCE_DIR}/include)
 # 采用显式指定源码的方式，比 GLOB 更安全，避免幽灵文件问题
 set(STORAGE_SRC
     src/storage/file_manager.cpp
-    # src/storage/buffer_pool.cpp
+    src/storage/buffer_pool.cpp
     src/storage/dict_manager.cpp
 )
 
@@ -74,7 +74,7 @@ add_executable(test_dict_manager tests/test_dict_manager.cpp)
 target_link_libraries(test_dict_manager PRIVATE RuankoCore)
 add_test(NAME Storage_DictMgr_Test COMMAND test_dict_manager)
 
-# 后续测试用例预留...
-# add_executable(test_record_rw tests/test_record_rw.cpp)
-# target_link_libraries(test_record_rw PRIVATE RuankoCore)
-# add_test(NAME Engine_RecordRW_Test COMMAND test_record_rw)
+# 第三阶段：记录读写 + BufferPool 测试
+add_executable(test_record_rw tests/test_record_rw.cpp)
+target_link_libraries(test_record_rw PRIVATE RuankoCore)
+add_test(NAME Storage_RecordRW_Test COMMAND test_record_rw)
