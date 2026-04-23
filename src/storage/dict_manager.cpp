@@ -64,6 +64,11 @@ ErrorCode DictManager::UseDatabase(const std::string& dbName) {
     return ErrorCode::DB_OK;
 }
 
+// ─── GetCurrentDB ─────────────────────────────────────────
+std::string DictManager::GetCurrentDB() {
+    return g_currentDbDir;
+}
+
 // ─── ShowTables ──────────────────────────────────────────
 ErrorCode DictManager::ShowTables(std::vector<std::string>& outTables) {
     outTables.clear();

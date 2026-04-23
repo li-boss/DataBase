@@ -4,8 +4,12 @@
 #include <vector>
 #include "parser/sql_parser.h"
 #include "engine/record_manager.h"
+#include "storage/buffer_pool.h"
 
 int main() {
+    // 启动前初始化缓冲池 (例如 64 页容量)
+    BufferPool::init(64);
+    
     std::cout << "=== RuankoDB Booting ===" << std::endl;
     std::cout << "Welcome to RuankoDB CLI interact interface." << std::endl;
     std::cout << "Type 'exit' or 'quit' to quit." << std::endl;
@@ -57,6 +61,7 @@ int main() {
         }
     }
     
+    BufferPool::shutdown();
     std::cout << "Bye." << std::endl;
     return 0;
 }

@@ -26,7 +26,7 @@ include_directories(${CMAKE_SOURCE_DIR}/include)
 
 # [用户约定的隔离常量]
 # D8 前默认开启 STUB，用于剥离 Dev-B 的依赖：
-option(USE_STORAGE_STUB "Use Stub instead of true Storage module" ON)
+option(USE_STORAGE_STUB "Use Stub instead of true Storage module" OFF)
 if(USE_STORAGE_STUB)
     add_compile_definitions(USE_STORAGE_STUB=1)
 endif()
@@ -61,9 +61,9 @@ add_library(RuankoCore STATIC
 )
 
 # 4. 主程序构建 (DBMS 终端入口)
-add_executable(RuankoDB src/main.cpp)
+add_executable(RuankoDB_v2 src/main.cpp)
 # 将核心逻辑链接到主程序
-target_link_libraries(RuankoDB PRIVATE RuankoCore)
+target_link_libraries(RuankoDB_v2 PRIVATE RuankoCore)
 
 
 # 5. 测试工程构建 (CTest)
