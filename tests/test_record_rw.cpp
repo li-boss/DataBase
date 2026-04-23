@@ -31,13 +31,13 @@ static void cleanup(const std::string& name) {
 
 // ─── 辅助：构造字段定义（Users 表）──────────────────────
 
-static std::vector<FieldDefinition> makeUsersFields() {
-    std::vector<FieldDefinition> fields;
-    FieldDefinition f;
+static std::vector<ColumnDef> makeUsersFields() {
+    std::vector<ColumnDef> fields;
+    ColumnDef f;
 
     // id: offset=0, INT(4字节)
     std::strncpy(f.fieldName, "id", MAX_NAME_LEN - 1);
-    f.type   = FieldType::TYPE_INT;
+    f.type   = DataType::TYPE_INT;
     f.length = 4;
     f.offset = 0;
     f.isPrimaryKey = 1;
@@ -46,7 +46,7 @@ static std::vector<FieldDefinition> makeUsersFields() {
 
     // name: offset=4, VARCHAR(32字节)
     std::strncpy(f.fieldName, "name", MAX_NAME_LEN - 1);
-    f.type   = FieldType::TYPE_VARCHAR;
+    f.type   = DataType::TYPE_VARCHAR;
     f.length = 32;
     f.offset = 4;
     f.isPrimaryKey = 0;
@@ -55,7 +55,7 @@ static std::vector<FieldDefinition> makeUsersFields() {
 
     // age: offset=4+32=36, INT(4字节)，recordSize=40
     std::strncpy(f.fieldName, "age", MAX_NAME_LEN - 1);
-    f.type   = FieldType::TYPE_INT;
+    f.type   = DataType::TYPE_INT;
     f.length = 4;
     f.offset = 36;
     f.isPrimaryKey = 0;
@@ -137,7 +137,7 @@ static void test_single_record_rw() {
 
     // 验证 DictManager 加载的偏移量正确
     TableHeader header;
-    std::vector<FieldDefinition> loadedFields;
+    std::vector<ColumnDef> loadedFields;
     ErrorCode err = DictManager::loadTable(tblName, header, loadedFields);
     assert(err == ErrorCode::DB_OK);
     assert(header.recordCount == 0);  // 刚建表，计数为 0（记录存在但未更新计数）

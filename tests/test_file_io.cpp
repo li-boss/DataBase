@@ -14,8 +14,8 @@ void test_struct_alignment() {
     // 148 是 4 的倍数，不需要额外填充
     assert(sizeof(TableHeader) == 148);
     
-    // MAX_NAME_LEN (128) + FieldType(4) + 4 * uint32_t (16) = 148 字节
-    assert(sizeof(FieldDefinition) == 148);
+    // MAX_NAME_LEN (128) + DataType(4) + 4 * uint32_t (16) = 148 字节
+    assert(sizeof(ColumnDef) == 148);
     
     std::cout << "  -> Alignment PASS: TableHeader Size = " << sizeof(TableHeader) << " bytes." << std::endl;
 }

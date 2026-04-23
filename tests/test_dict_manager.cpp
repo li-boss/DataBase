@@ -21,10 +21,10 @@
 
 namespace fs = std::filesystem;
 
-// ─── 辅助：构造 FieldDefinition ──────────────────────────
-FieldDefinition makeField(const char* name, FieldType type,
-                           uint32_t length, uint32_t isPk = 0) {
-    FieldDefinition fd;
+// ─── 辅助：构造 ColumnDef ──────────────────────────
+ColumnDef makeField(const char* name, DataType type,
+                     uint32_t length, uint32_t isPk = 0) {
+    ColumnDef fd;
     std::memset(&fd, 0, sizeof(fd));
     std::strncpy(fd.fieldName, name, MAX_NAME_LEN - 1);
     fd.type       = type;
@@ -48,17 +48,17 @@ void test_load_table() {
     cleanup();
 
     // 1) 用 DDLExecutor 建一张 3 列表
-    std::vector<FieldDefinition> fields;
-    fields.push_back(makeField("id",     FieldType::TYPE_INT,      4, 1));
-    fields.push_back(makeField("name",   FieldType::TYPE_VARCHAR, 32));
-    fields.push_back(makeField("age",    FieldType::TYPE_INT,      4));
+    std::vector<ColumnDef> fields;
+    fields.push_back(makeField("id",     DataType::TYPE_INT,      4, 1));
+    fields.push_back(makeField("name",   DataType::TYPE_VARCHAR, 32));
+    fields.push_back(makeField("age",    DataType::TYPE_INT,      4));
 
     bool ok = DDLExecutor::createTable(TEST_TABLE, fields);
     assert(ok == true);
 
     // 2) 用 DictManager 加载完整元信息
     TableHeader hdr;
-    std::vector<FieldDefinition> loadedFields;
+    std::vector<ColumnDef> loadedFields;
 
     ErrorCode err = DictManager::loadTable(TEST_TABLE, hdr, loadedFields);
     assert(err == ErrorCode::DB_OK);
@@ -71,16 +71,16 @@ void test_load_table() {
 
     // 4) 校验字段列表
     assert(loadedFields.size() == 3);
-    assert(loadedFields[0].type == FieldType::TYPE_INT);
+    assert(loadedFields[0].type == DataType::TYPE_INT);
     assert(std::strcmp(loadedFields[0].fieldName, "id") == 0);
     assert(loadedFields[0].isPrimaryKey == 1);
     assert(loadedFields[0].offset == 0);     // 第一个字段偏移为 0
 
-    assert(loadedFields[1].type == FieldType::TYPE_VARCHAR);
+    assert(loadedFields[1].type == DataType::TYPE_VARCHAR);
     assert(std::strcmp(loadedFields[1].fieldName, "name") == 0);
     assert(loadedFields[1].offset == 4);     // id 占 4 字节后开始
 
-    assert(loadedFields[2].type == FieldType::TYPE_INT);
+    assert(loadedFields[2].type == DataType::TYPE_INT);
     assert(std::strcmp(loadedFields[2].fieldName, "age") == 0);
 
     std::cout << "  -> PASS: loadTable verified (fields=" << hdr.fieldCount
@@ -94,8 +94,8 @@ void test_load_header_only() {
     std::cout << "[TEST] DictManager loadTableHeader..." << std::endl;
     cleanup();
 
-    std::vector<FieldDefinition> fields;
-    fields.push_back(makeField("x", FieldType::TYPE_INT, 4));
+    std::vector<ColumnDef> fields;
+    fields.push_back(makeField("x", DataType::TYPE_INT, 4));
     DDLExecutor::createTable(TEST_TABLE, fields);
 
     TableHeader hdr;
@@ -116,8 +116,8 @@ void test_table_exists() {
     assert(DictManager::tableExists(TEST_TABLE) == false);
 
     // 建表后再查
-    std::vector<FieldDefinition> f;
-    f.push_back(makeField("a", FieldType::TYPE_INT, 4));
+    std::vector<ColumnDef> f;
+    f.push_back(makeField("a", DataType::TYPE_INT, 4));
     DDLExecutor::createTable(TEST_TABLE, f);
 
     assert(DictManager::tableExists(TEST_TABLE) == true);
@@ -131,8 +131,8 @@ void test_update_record_count() {
     std::cout << "[TEST] DictManager updateRecordCount..." << std::endl;
     cleanup();
 
-    std::vector<FieldDefinition> f;
-    f.push_back(makeField("b", FieldType::TYPE_INT, 4));
+    std::vector<ColumnDef> f;
+    f.push_back(makeField("b", DataType::TYPE_INT, 4));
     DDLExecutor::createTable(TEST_TABLE, f);
 
     // 模拟 INSERT 了 5 条记录
@@ -161,7 +161,7 @@ void test_error_paths() {
 
     // 5a) 加载不存在的表
     TableHeader hdr;
-    std::vector<FieldDefinition> fds;
+    std::vector<ColumnDef> fds;
     ErrorCode err = DictManager::loadTable("__nonexistent_table_xyz__", hdr, fds);
     assert(err == ErrorCode::DB_ERR_TABLE_NOT_FOUND);
 
@@ -209,7 +209,7 @@ int main() {
     test_error_paths();         // 边界/异常路径
 
     std::cout << "\n========================================\n";
-    std::cout << "  ALL 6 TESTS PASSED ✅\n";
+    std::cout << "  ALL 6 TESTS PASSED\n";
     std::cout << "========================================\n";
 
     return 0;

@@ -9,7 +9,7 @@
  *
  * 职责划分：
  *   - 本文件：数值常量、页面参数、类型大小映射（纯数据）
- *   - db_structs.h：结构体定义（TableHeader / FieldDefinition 等）
+ *   - db_structs.h：结构体定义（TableHeader / ColumnDef 等）
  *   - db_errors.h ：错误码枚举与消息
  *
  * 设计原则：所有涉及存储布局的"魔法数字"集中在此处，
@@ -25,10 +25,10 @@ constexpr int    MAX_PAGES      = 64;     ///< 缓冲池最大缓存页数（可
 constexpr size_t PAGE_HEADER_SIZE = 8;    ///< 页头预留空间（page_id:4 + dirty_flag:4）
 
 // ─── 字段类型相关 ────────────────────────────────────────
-// （FieldType 枚举定义在 db_structs.h 中，此处仅提供类型→字节数映射）
+// （DataType 枚举定义在 db_structs.h 中，此处仅提供类型→字节数映射）
 
 /**
- * @brief 根据 FieldType 返回该类型的固定存储宽度（字节）
+ * @brief 根据 DataType 返回该类型的固定存储宽度（字节）
  * @param type 字段类型枚举
  * @param userDeclaredLength 用户声明的长度（仅 CHAR/VARCHAR 需要传入，其余传 0）
  * @return 该字段占用的字节数；若类型未知返回 0

@@ -22,7 +22,16 @@ struct PageSlot {
     PageSlot() : valid(false), pinCount(0) {}
 };
 
-// BufferPool 全局单例：LRU 页面缓存
+/**
+ * @file buffer_pool.h
+ * @brief BufferPool 全局单例：LRU 页面缓存
+ *
+ * 同时支持两套调用方式：
+ *   1. fd-based（方案规定）：GetPage(fd, pid) / MarkDirty(fd, pid) 等
+ *   2. filepath-based（内部兼容）：getPage(filepath, pid) 等
+ *
+ * fd 通过 FileManager::OpenFile 获取。
+ */
 class BufferPool {
 public:
     // ─── 生命周期 ────────────────────────────────────────
@@ -30,7 +39,6 @@ public:
     /**
      * @brief 初始化缓冲池
      * @param maxPages 最大缓存页数（不超过 MAX_PAGES）
-     * @return 成功返回 DB_OK
      */
     static ErrorCode init(uint32_t maxPages = 16);
 
@@ -39,59 +47,51 @@ public:
      */
     static void shutdown();
 
-    // ─── 核心操作 ────────────────────────────────────────
+    // ─── fd-based 接口（方案规定）────────────────────────
 
     /**
-     * @brief 获取指定文件+页号的页面数据到缓存
-     *
-     * 如果页已在池中：提升 LRU 优先级（move-to-front）
-     * 如果页不在池中：从磁盘加载，必要时驱逐最老的干净页
-     *
-     * @param filepath    数据文件路径（如 "Users.trd"）
-     * @param pageId      页编号（从 0 开始）
-     * @param outData     输出：指向页面数据的指针（不可修改）
-     * @return DB_OK 成功；DB_ERR_PAGE_NOT_FOUND 页不存在但已预分配槽位
+     * @brief 通过 fd 获取指定页（方案规定签名）
+     * @param fd     由 FileManager::OpenFile 返回的文件描述符
+     * @param pageId 页号（从 0 开始）
+     * @return 指向页数据的 void 指针；nullptr 表示失败
      */
+    static void* GetPage(int fd, uint32_t pageId);
+
+    /**
+     * @brief 通过 fd 标记脏页（方案规定签名）
+     */
+    static ErrorCode MarkDirty(int fd, uint32_t pageId);
+
+    /**
+     * @brief 通过 fd 将指定页写回磁盘（方案规定签名）
+     */
+    static ErrorCode FlushPage(int fd, uint32_t pageId);
+
+    /**
+     * @brief 通过 fd 解除页面固定（方案规定命名：ReleasePage）
+     */
+    static ErrorCode ReleasePage(int fd, uint32_t pageId);
+
+    // ─── filepath-based 接口（保持兼容）─────────────────
+
     static ErrorCode getPage(const std::string& filepath, uint32_t pageId,
                               const char*& outData);
 
-    /**
-     * @brief 获取可写页面（返回非 const 指针，调用后自动标记脏页）
-     */
     static ErrorCode getPageWritable(const std::string& filepath, uint32_t pageId,
                                       char*& outData);
 
-    /**
-     * @brief 标记指定页为脏（内容已被修改，需写回磁盘）
-     */
     static ErrorCode markDirty(const std::string& filepath, uint32_t pageId);
 
-    /**
-     * @brief 将指定页写回磁盘（如果干净则无操作）
-     */
     static ErrorCode flushPage(const std::string& filepath, uint32_t pageId);
 
-    /**
-     * @brief 将所有脏页写回磁盘（shutdown 前调用）
-     */
     static void flushAll();
 
-    /**
-     * @brief 解除页面固定（pinCount--），归零时页面可被驱逐
-     */
     static ErrorCode unpin(const std::string& filepath, uint32_t pageId);
 
     // ─── 工具 ────────────────────────────────────────────
 
-    /** @brief 当前池中有效页数 */
     static uint32_t usedPages();
-
-    /** @brief 驱逐统计：累计驱逐页数 */
     static uint32_t evictionCount();
-
-    /** @brief 命中统计：缓存命中次数 */
     static uint32_t hitCount();
-
-    /** @brief 未命中统计：缓存未命中次数 */
     static uint32_t missCount();
 };

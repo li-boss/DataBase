@@ -4,6 +4,7 @@
 #include "../../include/common/db_types.h"
 #include <cstring>
 #include <fstream>
+#include <iostream>
 
 namespace BPNamespace {
 
@@ -231,3 +232,35 @@ uint32_t BufferPool::usedPages()     { return BPNamespace::g_count; }
 uint32_t BufferPool::evictionCount() { return BPNamespace::g_evictions; }
 uint32_t BufferPool::hitCount()      { return BPNamespace::g_hits; }
 uint32_t BufferPool::missCount()     { return BPNamespace::g_misses; }
+
+// ─── fd-based 接口（方案规定签名）────────────────────────
+
+void* BufferPool::GetPage(int fd, uint32_t pageId) {
+    std::string fp = FileManager::GetFilePath(fd);
+    if (fp.empty()) {
+        std::cerr << "[BufferPool] GetPage: invalid fd=" << fd << "\n";
+        return nullptr;
+    }
+    const char* data = nullptr;
+    ErrorCode err = getPage(fp, pageId, data);
+    if (err != ErrorCode::DB_OK) return nullptr;
+    return const_cast<char*>(data);
+}
+
+ErrorCode BufferPool::MarkDirty(int fd, uint32_t pageId) {
+    std::string fp = FileManager::GetFilePath(fd);
+    if (fp.empty()) return ErrorCode::DB_INVALID_PARAM;
+    return markDirty(fp, pageId);
+}
+
+ErrorCode BufferPool::FlushPage(int fd, uint32_t pageId) {
+    std::string fp = FileManager::GetFilePath(fd);
+    if (fp.empty()) return ErrorCode::DB_INVALID_PARAM;
+    return flushPage(fp, pageId);
+}
+
+ErrorCode BufferPool::ReleasePage(int fd, uint32_t pageId) {
+    std::string fp = FileManager::GetFilePath(fd);
+    if (fp.empty()) return ErrorCode::DB_INVALID_PARAM;
+    return unpin(fp, pageId);
+}

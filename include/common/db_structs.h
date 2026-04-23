@@ -7,7 +7,7 @@
 #include "db_types.h"            // MAX_NAME_LEN（同目录）
 
 // ─── 核心结构体定义 ──────────────────────────────────────
-enum class FieldType : uint32_t {
+enum class DataType : uint32_t {
     TYPE_INT = 1,
     TYPE_CHAR = 2,
     TYPE_VARCHAR = 3,
@@ -35,14 +35,20 @@ struct TableHeader {
     uint32_t recordSize;  // 单行记录的总字节数（关键：用于定位 .trd 文件中的偏移量）
 };
 
-// 表定义文件 .tdf 的单个字段描述
-struct FieldDefinition {
+// 表定义文件 .tdf 的单个字段描述（方案命名：ColumnDef）
+struct ColumnDef {
     char fieldName[MAX_NAME_LEN];
-    FieldType type;
+    DataType type;
     uint32_t length;      // 类型长度（例如 CHAR(50) 则为 50，补齐后可能为 52）
     uint32_t offset;      // 该字段在单条记录(recordSize)中的起始字节偏移量
-    uint32_t isPrimaryKey; 
+    uint32_t isPrimaryKey;
     uint32_t constraints; // 位图掩码：如 1表示NOT NULL, 2表示UNIQUE等
+};
+
+// 单条记录数据（方案要求）
+struct RecordData {
+    void* rawData;        // 指向序列化后的字节缓冲区
+    uint32_t size;        // 记录字节长度（= recordSize）
 };
 
 // 恢复默认对齐

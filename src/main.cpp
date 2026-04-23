@@ -2,12 +2,12 @@
 #include <iostream>
 #include <vector>
 #include <cstring>
-#include "../../include/engine/ddl_executor.h"
+#include "../include/engine/ddl_executor.h"
 
 // 辅助函数：快速构造字段
-FieldDefinition makeField(const char* name, FieldType type, uint32_t length, uint32_t isPk) {
-    FieldDefinition fd;
-    std::memset(&fd, 0, sizeof(FieldDefinition));
+ColumnDef makeField(const char* name, DataType type, uint32_t length, uint32_t isPk) {
+    ColumnDef fd;
+    std::memset(&fd, 0, sizeof(ColumnDef));
     std::strncpy(fd.fieldName, name, MAX_NAME_LEN - 1);
     fd.type = type;
     fd.length = length;
@@ -19,13 +19,13 @@ int main() {
     std::cout << "=== RuankoDB Booting ===" << std::endl;
 
     // 模拟 SQL: CREATE TABLE Users (id INT PRIMARY KEY, name VARCHAR(32), age INT);
-    std::vector<FieldDefinition> userFields;
+    std::vector<ColumnDef> userFields;
     // INT 类型固定占 4 字节
-    userFields.push_back(makeField("id", FieldType::TYPE_INT, 4, 1));
+    userFields.push_back(makeField("id", DataType::TYPE_INT, 4, 1));
     // VARCHAR 设定最大 32 字节
-    userFields.push_back(makeField("name", FieldType::TYPE_VARCHAR, 32, 0));
+    userFields.push_back(makeField("name", DataType::TYPE_VARCHAR, 32, 0));
     // INT 固定 4 字节
-    userFields.push_back(makeField("age", FieldType::TYPE_INT, 4, 0));
+    userFields.push_back(makeField("age", DataType::TYPE_INT, 4, 0));
 
     std::cout << "Executing DDL: Creating table 'Users'..." << std::endl;
     
