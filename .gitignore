@@ -10,5 +10,10 @@ bin/
 *.db
 *.log
 
+# 编译产物
+*.exe
+*.o
+*.obj
+
 # VS Code 配置文件 (可选)
 .vscode/
