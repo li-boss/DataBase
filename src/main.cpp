@@ -34,17 +34,18 @@ int main() {
 
         // 核心流水线 2：交给 Dev-A-Engine 的枢纽 RecordManager 去执行
         ExecuteResult result = RecordManager::Execute(ast.get());
-
-        // --- 展现层 ---
+        
+        // --- 以下为 Access 展现层假逻辑（原属 Dev-C，写在此处用于测试闭环） ---
         if (result.error != 0) {
             std::cerr << result.msg << std::endl;
         } else {
+            // 如果查出来了数据，打印二维表结构
             if (!result.headers.empty()) {
                 for (const auto& h : result.headers) {
                     std::cout << h << "\t| ";
                 }
                 std::cout << "\n----------------------------" << std::endl;
-
+                
                 for (const auto& row : result.rows) {
                     for (const auto& col : row) {
                         std::cout << col << "\t| ";
@@ -55,7 +56,7 @@ int main() {
             std::cout << result.msg << std::endl;
         }
     }
-
+    
     std::cout << "Bye." << std::endl;
     return 0;
 }

@@ -24,8 +24,14 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 # 将 include 目录暴露给所有目标，代码中可直接 #include "storage/file_manager.h"
 include_directories(${CMAKE_SOURCE_DIR}/include)
 
+# [用户约定的隔离常量]
+# D8 前默认开启 STUB，用于剥离 Dev-B 的依赖：
+option(USE_STORAGE_STUB "Use Stub instead of true Storage module" ON)
+if(USE_STORAGE_STUB)
+    add_compile_definitions(USE_STORAGE_STUB=1)
+endif()
+
 # 3. 源码收集与核心库构建 (RuankoCore)
-# 采用显式指定源码的方式，比 GLOB 更安全，避免幽灵文件问题
 set(STORAGE_SRC
     src/storage/file_manager.cpp
     src/storage/buffer_pool.cpp
@@ -33,13 +39,13 @@ set(STORAGE_SRC
 )
 
 set(ENGINE_SRC
-    # src/engine/record_manager.cpp
+     src/engine/record_manager.cpp
      src/engine/ddl_executor.cpp
-    # src/engine/dml_executor.cpp
+     src/engine/dml_executor.cpp
 )
 
 set(PARSER_SRC
-    # src/parser/sql_parser.cpp
+     src/parser/sql_parser.cpp
 )
 
 set(ACCESS_SRC
