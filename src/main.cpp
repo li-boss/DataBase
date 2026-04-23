@@ -1,39 +1,61 @@
 // src/main.cpp
 #include <iostream>
+#include <string>
 #include <vector>
-#include <cstring>
-#include "../include/engine/ddl_executor.h"
-
-// 辅助函数：快速构造字段
-ColumnDef makeField(const char* name, DataType type, uint32_t length, uint32_t isPk) {
-    ColumnDef fd;
-    std::memset(&fd, 0, sizeof(ColumnDef));
-    std::strncpy(fd.fieldName, name, MAX_NAME_LEN - 1);
-    fd.type = type;
-    fd.length = length;
-    fd.isPrimaryKey = isPk;
-    return fd;
-}
+#include "parser/sql_parser.h"
+#include "engine/record_manager.h"
 
 int main() {
     std::cout << "=== RuankoDB Booting ===" << std::endl;
+    std::cout << "Welcome to RuankoDB CLI interact interface." << std::endl;
+    std::cout << "Type 'exit' or 'quit' to quit." << std::endl;
+    std::cout << "Try: CREATE TABLE test  |  SELECT * FROM test" << std::endl;
 
-    // 模拟 SQL: CREATE TABLE Users (id INT PRIMARY KEY, name VARCHAR(32), age INT);
-    std::vector<ColumnDef> userFields;
-    // INT 类型固定占 4 字节
-    userFields.push_back(makeField("id", DataType::TYPE_INT, 4, 1));
-    // VARCHAR 设定最大 32 字节
-    userFields.push_back(makeField("name", DataType::TYPE_VARCHAR, 32, 0));
-    // INT 固定 4 字节
-    userFields.push_back(makeField("age", DataType::TYPE_INT, 4, 0));
+    while (true) {
+        std::cout << "\nRuankoDB> ";
+        std::string sql;
+        std::getline(std::cin, sql);
 
-    std::cout << "Executing DDL: Creating table 'Users'..." << std::endl;
-    
-    // 先清理可能存在的旧文件
-    DDLExecutor::dropTable("Users");
-    
-    // 执行建表
-    DDLExecutor::createTable("Users", userFields);
+        if (sql == "exit" || sql == "quit") {
+            break;
+        }
 
+        if (!SqlParser::Validate(sql)) {
+            std::cout << "Invalid or empty SQL statement." << std::endl;
+            continue;
+        }
+
+        // 核心流水线 1：交给 Dev-A-Parser 解析为 AST
+        auto ast = SqlParser::Parse(sql);
+        if (ast->type == StmtType::UNKNOWN) {
+            std::cout << "Sorry, could not parse or unmatched SQL syntax." << std::endl;
+            continue;
+        }
+
+        // 核心流水线 2：交给 Dev-A-Engine 的枢纽 RecordManager 去执行
+        ExecuteResult result = RecordManager::Execute(ast.get());
+
+        // --- 展现层 ---
+        if (result.error != 0) {
+            std::cerr << result.msg << std::endl;
+        } else {
+            if (!result.headers.empty()) {
+                for (const auto& h : result.headers) {
+                    std::cout << h << "\t| ";
+                }
+                std::cout << "\n----------------------------" << std::endl;
+
+                for (const auto& row : result.rows) {
+                    for (const auto& col : row) {
+                        std::cout << col << "\t| ";
+                    }
+                    std::cout << std::endl;
+                }
+            }
+            std::cout << result.msg << std::endl;
+        }
+    }
+
+    std::cout << "Bye." << std::endl;
     return 0;
 }
