@@ -52,18 +52,27 @@ set(ACCESS_SRC
     # src/access/cli_handler.cpp
 )
 
+set(SERVER_SRC
+    src/server/http_server.cpp
+)
+
 # 将所有核心业务逻辑编译为一个静态库，彻底与 main.cpp 解耦
 add_library(RuankoCore STATIC
     ${STORAGE_SRC}
     ${ENGINE_SRC}
     ${PARSER_SRC}
     ${ACCESS_SRC}
+    ${SERVER_SRC}
 )
 
 # 4. 主程序构建 (DBMS 终端入口)
 add_executable(RuankoDB_v2 src/main.cpp)
 # 将核心逻辑链接到主程序
-target_link_libraries(RuankoDB_v2 PRIVATE RuankoCore)
+if(WIN32)
+    target_link_libraries(RuankoDB_v2 PRIVATE RuankoCore ws2_32 crypt32)
+else()
+    target_link_libraries(RuankoDB_v2 PRIVATE RuankoCore)
+endif()
 
 
 # 5. 测试工程构建 (CTest)
