@@ -57,14 +57,17 @@ void HttpServer::Start(int port) {
         res.set_header("Access-Control-Allow-Origin", "*");
     });
 
-    // 1. 列出所有数据库
+    // 1. 列出所有数据库（仅识别包含 ruanko.db 元文件的目录）
     svr.Get("/api/databases", [](const httplib::Request&, httplib::Response& res) {
         json j;
         j["ok"] = true;
         std::vector<std::string> dbs;
         for (const auto& entry : std::filesystem::directory_iterator(".")) {
-            if (entry.is_directory() && entry.path().filename() != "build" && entry.path().filename() != "src" && entry.path().filename() != "include" && entry.path().filename() != "web") {
-                dbs.push_back(entry.path().filename().string());
+            if (entry.is_directory()) {
+                std::string metaFile = entry.path().string() + "/ruanko.db";
+                if (std::filesystem::exists(metaFile)) {
+                    dbs.push_back(entry.path().filename().string());
+                }
             }
         }
         j["databases"] = dbs;
@@ -107,6 +110,12 @@ void HttpServer::Start(int port) {
         auto cols = body["columns"];
         for (size_t i = 0; i < cols.size(); ++i) {
             sql += cols[i].value("name", "") + " " + cols[i].value("type", "");
+            if (cols[i].value("primaryKey", false)) {
+                sql += " PRIMARY KEY";
+            }
+            if (cols[i].value("notNull", false)) {
+                sql += " NOT NULL";
+            }
             if (i < cols.size() - 1) sql += ", ";
         }
         sql += ");";
@@ -134,8 +143,19 @@ void HttpServer::Start(int port) {
             for (const auto& f : fields) {
                 json col;
                 col["name"] = f.fieldName;
-                if (f.type == DataType::TYPE_INT) col["type"] = "INT";
-                else col["type"] = "VARCHAR";
+                switch (f.type) {
+                    case DataType::TYPE_INT:    col["type"] = "INT"; break;
+                    case DataType::TYPE_CHAR:   col["type"] = "CHAR"; break;
+                    case DataType::TYPE_VARCHAR:col["type"] = "VARCHAR"; break;
+                    case DataType::TYPE_BOOLEAN:col["type"] = "BOOL"; break;
+                    case DataType::TYPE_FLOAT:  col["type"] = "FLOAT"; break;
+                    case DataType::TYPE_DOUBLE: col["type"] = "DOUBLE"; break;
+                    case DataType::TYPE_TEXT:   col["type"] = "TEXT"; break;
+                    case DataType::TYPE_DATETIME:col["type"] = "DATETIME"; break;
+                    default: col["type"] = "VARCHAR"; break;
+                }
+                col["primaryKey"] = (f.isPrimaryKey != 0);
+                col["notNull"] = ((f.constraints & 1u) != 0 || f.isPrimaryKey != 0);
                 cols.push_back(col);
             }
             j["columns"] = cols;
@@ -153,11 +173,87 @@ void HttpServer::Start(int port) {
         res.set_content(j.dump(), "application/json");
     });
 
-    // 8. 插入数据
+    // 8. 插入数据（带约束校验）
     svr.Post(R"(/api/data/(.*))", [](const httplib::Request& req, httplib::Response& res) {
         std::string table = req.matches[1];
         auto body = json::parse(req.body);
         auto row = body["row"];
+
+        // 加载表结构做校验
+        TableHeader header;
+        std::vector<ColumnDef> fields;
+        ErrorCode err = DictManager::loadTable(table, header, fields);
+
+        if (err != ErrorCode::DB_OK || row.size() != fields.size()) {
+            json j; j["ok"] = false;
+            j["error"] = "Table not found or column count mismatch.";
+            res.set_content(j.dump(), "application/json");
+            return;
+        }
+
+        // NOT NULL 校验
+        for (size_t i = 0; i < fields.size(); ++i) {
+            bool isNotNull = ((fields[i].constraints & 1u) != 0 || fields[i].isPrimaryKey != 0);
+            std::string val = row[i].is_string() ? row[i].get<std::string>() : row[i].dump();
+            if (isNotNull && val.empty()) {
+                json j; j["ok"] = false;
+                j["error"] = "Column '" + std::string(fields[i].fieldName) + "' cannot be NULL.";
+                res.set_content(j.dump(), "application/json");
+                return;
+            }
+        }
+
+        // 主键唯一性检查（扫描已有记录）
+        int pkIdx = -1;
+        for (size_t i = 0; i < fields.size(); ++i) {
+            if (fields[i].isPrimaryKey != 0) { pkIdx = static_cast<int>(i); break; }
+        }
+        if (pkIdx >= 0 && header.recordCount > 0) {
+            std::string pkVal = row[pkIdx].get<std::string>();
+            int fd;
+            if (FileManager::OpenFile(DictManager::GetCurrentDB() + "/" + table + ".trd", "r", fd)) {
+                uint32_t rpp = 4080 / header.recordSize; if (!rpp) rpp = 1;
+                uint32_t totalPgs = (header.recordCount + rpp - 1) / rpp;
+                bool dupFound = false;
+
+                for (uint32_t pid = 0; pid < totalPgs && !dupFound; ++pid) {
+                    void* pg = BufferPool::GetPage(fd, pid); if (!pg) continue;
+                    uint32_t startR = pid * rpp;
+                    uint32_t endR = std::min(startR + rpp, header.recordCount);
+                    const auto& f = fields[pkIdx];
+
+                    for (uint32_t ri = startR; ri < endR; ++ri) {
+                        char* rp = static_cast<char*>(pg) + (ri % rpp) * header.recordSize;
+                        std::string existingPk;
+                        if (f.type == DataType::TYPE_INT) {
+                            int32_t v; std::memcpy(&v, rp + f.offset, 4); existingPk = std::to_string(v);
+                        } else if (f.type == DataType::TYPE_FLOAT) {
+                            float v; std::memcpy(&v, rp + f.offset, 4);
+                            std::ostringstream o; o << v; existingPk = o.str();
+                        } else if (f.type == DataType::TYPE_DOUBLE) {
+                            double v; std::memcpy(&v, rp + f.offset, 8);
+                            std::ostringstream o; o << v; existingPk = o.str();
+                        } else {
+                            char b[512] = {};
+                            std::strncpy(b, rp + f.offset, f.length > 511 ? 511 : f.length);
+                            existingPk = b;
+                        }
+                        if (existingPk == pkVal) dupFound = true;
+                    }
+                    BufferPool::ReleasePage(fd, pid);
+                }
+                FileManager::CloseFile(fd);
+
+                if (dupFound) {
+                    json j; j["ok"] = false;
+                    j["error"] = "Duplicate primary key '" + pkVal + "'.";
+                    res.set_content(j.dump(), "application/json");
+                    return;
+                }
+            }
+        }
+
+        // 通过 SQL 引擎执行插入（走 DMLExecutor，已含完整类型处理）
         std::string sql = "INSERT INTO " + table + " VALUES (";
         for (size_t i = 0; i < row.size(); ++i) {
             sql += "'" + row[i].get<std::string>() + "'";
@@ -203,14 +299,41 @@ void HttpServer::Start(int port) {
         if (pageData) {
             char* recordPtr = static_cast<char*>(pageData) + offset;
             for (size_t i = 0; i < fields.size() && i < row.size(); ++i) {
-                if (fields[i].type == DataType::TYPE_INT) {
-                    int32_t val = 0;
-                    try { val = std::stoi(row[i].get<std::string>()); } catch(...) {}
-                    std::memcpy(recordPtr + fields[i].offset, &val, 4);
-                } else {
-                    std::string strVal = row[i].get<std::string>();
-                    std::strncpy(recordPtr + fields[i].offset, strVal.c_str(), fields[i].length - 1);
-                    recordPtr[fields[i].offset + fields[i].length - 1] = '\0';
+                std::string strVal = row[i].get<std::string>();
+                switch (fields[i].type) {
+                    case DataType::TYPE_INT: {
+                        int32_t val = 0;
+                        try { val = std::stoi(strVal); } catch(...) {}
+                        std::memcpy(recordPtr + fields[i].offset, &val, 4);
+                        break;
+                    }
+                    case DataType::TYPE_FLOAT: {
+                        float val = 0.0f;
+                        try { val = std::stof(strVal); } catch(...) {}
+                        std::memcpy(recordPtr + fields[i].offset, &val, 4);
+                        break;
+                    }
+                    case DataType::TYPE_DOUBLE: {
+                        double val = 0.0;
+                        try { val = std::stod(strVal); } catch(...) {}
+                        std::memcpy(recordPtr + fields[i].offset, &val, 8);
+                        break;
+                    }
+                    case DataType::TYPE_BOOLEAN: {
+                        uint8_t bval = 0;
+                        // 兼容 true/false/T/F/1/0/YES/NO
+                        std::string upper = strVal;
+                        for (auto& c : upper) c = static_cast<unsigned char>(std::toupper(c));
+                        if (upper == "TRUE" || upper == "T" || upper == "1" || upper == "YES" || upper == "Y")
+                            bval = 1;
+                        *(recordPtr + fields[i].offset) = bval;
+                        break;
+                    }
+                    default: { // VARCHAR, CHAR, TEXT, DATETIME
+                        std::strncpy(recordPtr + fields[i].offset, strVal.c_str(), fields[i].length - 1);
+                        recordPtr[fields[i].offset + fields[i].length - 1] = '\0';
+                        break;
+                    }
                 }
             }
             BufferPool::MarkDirty(fd, pid);

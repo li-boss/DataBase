@@ -72,30 +72,78 @@ ExecuteResult DDLExecutor::executeCreateTable(const ASTNode* ast) {
     ExecuteResult res;
     std::vector<ColumnDef> parsedFields;
     
-    // 【解析阶段】将前端传递来的字符串列表，如 "id INT", 转换为底层的 ColumnDef 结构
+    // 【解析阶段】将前端传递来的字符串列表，如 "id INT NOT NULL", 转换为底层的 ColumnDef 结构
     for (const auto& colStr : ast->columns) {
         std::stringstream ss(colStr);
-        std::string cName, cType;
-        ss >> cName >> cType;
+        std::string token;
+        std::vector<std::string> tokens;
+        while (ss >> token) {
+            // 转大写用于关键字比较
+            std::string upper = token;
+            for (auto& c : upper) c = std::toupper(c);
+            tokens.push_back(upper);
+        }
+        
+        if (tokens.size() < 2) continue; // 至少需要 name + type
+        
+        // 跳过表级约束子句（如 PRIMARY KEY, UNIQUE, FOREIGN KEY, CHECK, CONSTRAINT, INDEX）
+        if (tokens[0] == "PRIMARY" || tokens[0] == "UNIQUE" || tokens[0] == "FOREIGN" 
+            || tokens[0] == "CHECK" || tokens[0] == "CONSTRAINT" || tokens[0] == "INDEX") {
+            continue;
+        }
+        
+        std::string cName = tokens[0];
+        std::string cType = tokens[1];
+        
+        // 检测约束关键字
+        bool isPK = false;
+        bool notNull = false;
+        for (size_t t = 2; t < tokens.size(); ++t) {
+            if (tokens[t] == "PRIMARY" && t + 1 < tokens.size() && tokens[t + 1] == "KEY") {
+                isPK = true;
+                ++t; // 跳过 KEY
+            } else if (tokens[t] == "NOT" && t + 1 < tokens.size() && tokens[t + 1] == "NULL") {
+                notNull = true;
+                ++t; // 跳过 NULL
+            }
+        }
         
         ColumnDef def;
         std::memset(&def, 0, sizeof(ColumnDef));
         std::strncpy(def.fieldName, cName.c_str(), MAX_NAME_LEN - 1);
         
-        // 简单类型映射判断 (不区分大小写)
-        std::string upperType = cType;
-        for (auto& c : upperType) c = std::toupper(c);
-        
-        if (upperType == "INT") {
+        // 类型映射（不区分大小写）
+        if (cType == "INT" || cType == "INTEGER") {
             def.type = DataType::TYPE_INT;
             def.length = 4;
-        } else if (upperType == "VARCHAR" || upperType.find("CHAR") != std::string::npos) {
+        } else if (cType == "VARCHAR") {
             def.type = DataType::TYPE_VARCHAR;
-            def.length = 256; // 这里为简化，固定给定 256 字节长度
-        } else {
-            def.type = DataType::TYPE_INT; // 兜底类型
+            def.length = 256;
+        } else if (cType.find("CHAR") != std::string::npos && cType != "VARCHAR") {
+            def.type = DataType::TYPE_CHAR;
+            def.length = 256;
+        } else if (cType == "BOOL" || cType == "BOOLEAN") {
+            def.type = DataType::TYPE_BOOLEAN;
+            def.length = 1;
+        } else if (cType == "FLOAT") {
+            def.type = DataType::TYPE_FLOAT;
             def.length = 4;
+        } else if (cType == "DOUBLE") {
+            def.type = DataType::TYPE_DOUBLE;
+            def.length = 8;
+        } else if (cType == "TEXT") {
+            def.type = DataType::TYPE_TEXT;
+            def.length = 256;
+        } else if (cType == "DATETIME") {
+            def.type = DataType::TYPE_DATETIME;
+            def.length = 256;
+        } else {
+            def.type = DataType::TYPE_VARCHAR; // 兜底
+            def.length = 256;
         }
+        
+        def.isPrimaryKey = isPK ? 1u : 0u;
+        def.constraints = notNull ? 1u : 0u; // bit 0 = NOT NULL
         
         parsedFields.push_back(def);
     }
