@@ -617,7 +617,7 @@ function fillCurrentSql() {
 
 function queryTouchesCurrentTable(sql, table) {
     const escaped = table.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    return new RegExp(`\\b(from|update|into|table|join)\\s+${escaped}\\b`, "i").test(sql);
+    return new RegExp(`\\b(from|update|into|alter|table|join|drop)\\s+${escaped}\\b`, "i").test(sql);
 }
 
 async function runSql() {

@@ -14,6 +14,7 @@ public:
     // 新增：接收 AST 树的顶层统一 DDL 接口
     static ExecuteResult executeCreateTable(const ASTNode* ast);
     static ExecuteResult executeDropTable(const ASTNode* ast);
+    static ExecuteResult executeAlterTable(const ASTNode* ast);  // ALTER TABLE ADD/DROP/MODIFY
     
     // 依据任务清单新增的库级别接口
     static ExecuteResult createDatabase(const ASTNode* ast);

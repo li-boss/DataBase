@@ -10,12 +10,16 @@ enum class StmtType {
     CREATE_TABLE,
     DROP_TABLE,
     SHOW_TABLES,
+    ALTER_TABLE,     // ALTER TABLE ... ADD/DROP/MODIFY COLUMN ...
     INSERT,
     SELECT,
     UPDATE,
     DELETE,
     UNKNOWN
 };
+
+// ALTER TABLE 操作类型
+enum class AlterAction { ADD_COLUMN, DROP_COLUMN, MODIFY_COLUMN };
 
 // 简单的单条件过滤表达，比如 id = 5
 struct WhereClause {
@@ -33,4 +37,10 @@ struct ASTNode {
     std::vector<std::string> columns;
     std::vector<std::string> values;
     WhereClause where;
+    // ALTER TABLE 专用
+    AlterAction alterAction;
+    std::string alterColumnName;   // 目标列名
+    std::string alterColumnType;  // 新类型 (ADD/MODIFY 时使用)
+    bool alterNotNull = false;     // 是否带 NOT NULL 约束
+    bool alterPrimaryKey = false;  // 是否为主键
 };

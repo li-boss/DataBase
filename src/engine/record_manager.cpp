@@ -22,6 +22,8 @@ ExecuteResult RecordManager::Execute(const ASTNode* ast) {
             return DDLExecutor::executeCreateTable(ast);
         case StmtType::DROP_TABLE:
             return DDLExecutor::executeDropTable(ast);
+        case StmtType::ALTER_TABLE:
+            return DDLExecutor::executeAlterTable(ast);
         case StmtType::SHOW_TABLES:
             return DDLExecutor::showTables();
         case StmtType::INSERT:

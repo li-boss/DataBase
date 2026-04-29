@@ -182,6 +182,72 @@ std::unique_ptr<ASTNode> SqlParser::Parse(const std::string& sql) {
             ss >> token; node->where.value = trimToken(token);  // 例: 5
         }
     }
+    else if (keyword == "ALTER") {
+        // 解析 ALTER TABLE <表名> ADD/DROP/MODIFY COLUMN <列名> [类型] [约束]
+        ss >> token;
+        if (toUpperCase(trimToken(token)) == "TABLE") {
+            node->type = StmtType::ALTER_TABLE;
+            ss >> token;
+            node->tbl = trimToken(token); // 表名
+
+            // 读取动作: ADD / DROP / MODIFY
+            std::string actionStr;
+            if (ss >> token) actionStr = toUpperCase(trimToken(token));
+
+            if (actionStr == "ADD") {
+                node->alterAction = AlterAction::ADD_COLUMN;
+                // 读取 COLUMN 关键字(可选)
+                if (ss >> token && toUpperCase(trimToken(token)) != "COLUMN") {
+                    // 不是COLUMN，回退——这是列名
+                    node->alterColumnName = trimToken(token);
+                    if (ss >> token) node->alterColumnType = trimToken(token); // 类型
+                } else {
+                    ss >> token; node->alterColumnName = trimToken(token); // 列名
+                    if (ss >> token) node->alterColumnType = trimToken(token); // 类型
+                }
+                // 读取约束
+                while (ss >> token) {
+                    std::string kw = toUpperCase(trimToken(token));
+                    if ((kw == "PRIMARY" || kw == "NOT")) {
+                        std::string next;
+                        if (kw == "PRIMARY" && ss >> next) { /* skip KEY */ }
+                        else if (kw == "NOT" && ss >> next) { /* skip NULL */ }
+                        if (kw == "PRIMARY" || kw == "NOT") {
+                            if (kw == "PRIMARY") node->alterPrimaryKey = true;
+                            if (kw == "NOT") node->alterNotNull = true;
+                        }
+                        break;
+                    }
+                    break;
+                }
+            } else if (actionStr == "DROP") {
+                node->alterAction = AlterAction::DROP_COLUMN;
+                if (ss >> token && toUpperCase(trimToken(token)) == "COLUMN")
+                    ss >> token;
+                node->alterColumnName = trimToken(token);
+            } else if (actionStr == "MODIFY") {
+                node->alterAction = AlterAction::MODIFY_COLUMN;
+                if (ss >> token && toUpperCase(trimToken(token)) == "COLUMN")
+                    ss >> token;
+                node->alterColumnName = trimToken(token);
+                if (ss >> token) node->alterColumnType = trimToken(token); // 类型
+
+                // 读取约束（与 ADD 相同逻辑）
+                while (ss >> token) {
+                    std::string kw = toUpperCase(trimToken(token));
+                    std::string next;
+                    if ((kw == "PRIMARY" || kw == "NOT")) {
+                        if (kw == "PRIMARY" && ss >> next) { /* skip KEY */ }
+                        else if (kw == "NOT" && ss >> next) { /* skip NULL */ }
+                        if (kw == "PRIMARY") node->alterPrimaryKey = true;
+                        if (kw == "NOT") node->alterNotNull = true;
+                        break;
+                    }
+                    break;
+                }
+            }
+        }
+    }
     else {
         // 如果都不匹配，判定为未知语法
         node->type = StmtType::UNKNOWN;

@@ -130,6 +130,34 @@ void HttpServer::Start(int port) {
         res.set_content(j.dump(), "application/json");
     });
 
+    // 6.2 修改表结构 (ALTER TABLE)
+    svr.Put("/api/alter-table", [](const httplib::Request& req, httplib::Response& res) {
+        auto body = json::parse(req.body);
+        std::string table   = body.value("table", "");
+        std::string action  = body.value("action", "");  // "add" | "drop" | "modify"
+        std::string colName  = body.value("column", "");
+        std::string colType  = body.value("type", "");
+        bool notNull  = body.value("notNull", false);
+        bool pk       = body.value("primaryKey", false);
+
+        std::string upperAct = action;
+        for (auto& c : upperAct) c = static_cast<unsigned char>(std::toupper(c));
+
+        std::string sql;
+        if (upperAct == "ADD") {
+            sql = "ALTER TABLE " + table + " ADD COLUMN " + colName + " " + colType;
+            if (pk)       sql += " PRIMARY KEY";
+            if (notNull)   sql += " NOT NULL";
+        } else if (upperAct == "DROP") {
+            sql = "ALTER TABLE " + table + " DROP COLUMN " + colName;
+        } else if (upperAct == "MODIFY") {
+            sql = "ALTER TABLE " + table + " MODIFY COLUMN " + colName + " " + colType;
+        }
+        sql += ";";
+        json j = ExecSql(sql);
+        res.set_content(j.dump(), "application/json");
+    });
+
     // 6.5 获取表结构
     svr.Get(R"(/api/schema/(.*))", [](const httplib::Request& req, httplib::Response& res) {
         std::string table = req.matches[1];
