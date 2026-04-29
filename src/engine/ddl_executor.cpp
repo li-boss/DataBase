@@ -11,6 +11,14 @@
 
 bool DDLExecutor::createTable(const std::string& tableName, const std::vector<ColumnDef>& fields) {
     std::string dbDir = DictManager::GetCurrentDB();
+    if (dbDir.empty()) {
+        std::cerr << "[Error] No database selected." << std::endl;
+        return false;
+    }
+    if (fields.empty()) {
+        std::cerr << "[Error] Table must have at least one column: " << tableName << std::endl;
+        return false;
+    }
     std::string tbFile = dbDir + "/" + tableName + ".tb";
     std::string tdfFile = dbDir + "/" + tableName + ".tdf";
     std::string trdFile = dbDir + "/" + tableName + ".trd";

@@ -76,8 +76,8 @@ std::unique_ptr<ASTNode> SqlParser::Parse(const std::string& sql) {
             node->tbl = trimToken(token); // 提取表名
             
             // 提取括号内的列定义，例如 (id INT, name VARCHAR)
-            std::string remainder;
-            std::getline(ss, remainder);
+            // 用 istreambuf_iterator 读取剩余全部内容（支持多行 SQL）
+            std::string remainder((std::istreambuf_iterator<char>(ss)), {});
             
             size_t start = remainder.find('(');
             size_t end = remainder.rfind(')');
@@ -134,18 +134,29 @@ std::unique_ptr<ASTNode> SqlParser::Parse(const std::string& sql) {
         }
     }
     else if (keyword == "INSERT") {
-        // 解析 INSERT INTO <表名> VALUES (<值1>, <值2>)
-        ss >> token; 
+        // 解析 INSERT INTO <表名> [(<列名>...)] VALUES (<值1>, <值2>)
+        ss >> token;
         if (toUpperCase(trimToken(token)) == "INTO") {
             node->type = StmtType::INSERT;
             ss >> token;
             node->tbl = trimToken(token); // 提取表名
-            
-            ss >> token; // 预期的 VALUES
+
+            // 跳过可选的列名列表 (col1, col2, ...)
+            ss >> token;
+            if (token.front() == '(') {
+                // 跳到对应 ')'（简单括号匹配）
+                int depth = 1;
+                while (depth > 0 && ss >> token) {
+                    if (token.back() == ')') --depth;
+                    if (token.find('(') != std::string::npos) ++depth;
+                }
+                ss >> token; // 读取 VALUES 关键字
+            }
+            // 此时 token 应为 VALUES
             if (toUpperCase(trimToken(token)) == "VALUES") {
-                std::string remainder;
-                std::getline(ss, remainder);
-                
+                // 用 istreambuf_iterator 读取剩余全部内容（支持多行）
+                std::string remainder((std::istreambuf_iterator<char>(ss)), {});
+
                 // 寻找括号内的数据
                 size_t start = remainder.find('(');
                 size_t end = remainder.rfind(')');
@@ -153,7 +164,7 @@ std::unique_ptr<ASTNode> SqlParser::Parse(const std::string& sql) {
                     std::string valsStr = remainder.substr(start + 1, end - start - 1);
                     std::stringstream valStream(valsStr);
                     std::string valDef;
-                    
+
                     // 按逗号分割每一个插入的具体值
                     while (std::getline(valStream, valDef, ',')) {
                         node->values.push_back(trimToken(valDef)); // 保存纯数值/字符串
