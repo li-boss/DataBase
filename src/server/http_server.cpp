@@ -16,10 +16,24 @@
 #include <iostream>
 #include <filesystem>
 #include <sstream>
+#include <csignal>
+#include <atomic>
 
 using json = nlohmann::json;
 
 namespace Ruanko {
+
+// ─── 全局：保存 server 指针，供信号处理器调用 Stop() ───
+static httplib::Server* g_server = nullptr;
+static std::atomic<bool> g_stopped(false);
+
+// ─── 信号处理：Ctrl+C / 关闭终端时优雅退出 ───
+static void onSignal(int sig) {
+    std::cout << "\n[Signal " << sig << "] Gracefully shutting down..." << std::endl;
+    if (g_server && !g_stopped.exchange(true)) {
+        g_server->stop();  // 使 svr.listen() 返回
+    }
+}
 
 static json ExecSql(const std::string& sql) {
     json res;
@@ -45,6 +59,15 @@ static json ExecSql(const std::string& sql) {
 
 void HttpServer::Start(int port) {
     httplib::Server svr;
+    g_server = &svr;
+    g_stopped = false;
+
+    // 注册信号处理器（Ctrl+C / Ctrl+Break / 关闭控制台窗口）
+    std::signal(SIGINT,  onSignal);
+    std::signal(SIGTERM, onSignal);
+#ifdef SIGBREAK
+    std::signal(SIGBREAK, onSignal);  // Windows Ctrl+Break
+#endif
 
     svr.Options(R"(.*)", [](const httplib::Request&, httplib::Response& res) {
         res.set_header("Access-Control-Allow-Origin", "*");
@@ -433,6 +456,13 @@ void HttpServer::Start(int port) {
 
     std::cout << "[RuankoDB HttpServer] Listening on http://0.0.0.0:" << port << "..." << std::endl;
     svr.listen("0.0.0.0", port);
+    g_server = nullptr;  // listen 返回后清除指针
+}
+
+void HttpServer::Stop() {
+    if (g_server && !g_stopped.exchange(true)) {
+        g_server->stop();
+    }
 }
 
 } // namespace Ruanko
