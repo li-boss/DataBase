@@ -259,6 +259,65 @@ std::unique_ptr<ASTNode> SqlParser::Parse(const std::string& sql) {
             }
         }
     }
+    else if (keyword == "UPDATE") {
+        // 解析 UPDATE <表名> SET <列名> = <值> [WHERE <列> <操作符> <值>]
+        node->type = StmtType::UPDATE;
+        ss >> token;
+        node->tbl = trimToken(token); // 表名
+
+        ss >> token; // 预期 SET
+        if (toUpperCase(trimToken(token)) == "SET") {
+            // 读 SET 列名
+            ss >> token;
+            node->columns.push_back(trimToken(token)); // set column
+            // 显式消费 '=' 号（ss >> token 会读到 '='，必须丢弃）
+            std::string eqToken;
+            if (ss >> eqToken && trimToken(eqToken) != "=") {
+                // 如果读到的不是 '='，说明 SQL 格式异常；暂不处理
+            }
+            // 读 SET 值（支持带引号的字符串）
+            ss >> token;
+            std::string val = trimToken(token);
+            if ((val.front() == '\'' && val.back() == '\'') ||
+                (val.front() == '"' && val.back() == '"')) {
+                val = val.substr(1, val.size() - 2); // 去引号
+            }
+            node->values.push_back(val);
+
+            // 可选 WHERE 子句（与 SELECT 相同逻辑）
+            if (ss >> token && toUpperCase(trimToken(token)) == "WHERE") {
+                node->where.hasWhere = true;
+                ss >> token; node->where.column = trimToken(token);
+                ss >> token; node->where.op = trimToken(token);
+                ss >> token; node->where.value = trimToken(token);
+                // 去引号
+                std::string& wv = node->where.value;
+                if ((wv.front() == '\'' && wv.back() == '\'') || (wv.front() == '"' && wv.back() == '"'))
+                    wv = wv.substr(1, wv.size() - 2);
+            }
+        }
+    }
+    else if (keyword == "DELETE") {
+        // 解析 DELETE FROM <表名> [WHERE <列> <操作符> <值>]
+        ss >> token;
+        if (toUpperCase(trimToken(token)) == "FROM") {
+            node->type = StmtType::DELETE;
+            ss >> token;
+            node->tbl = trimToken(token);
+
+            // 可选 WHERE 子句
+            if (ss >> token && toUpperCase(trimToken(token)) == "WHERE") {
+                node->where.hasWhere = true;
+                ss >> token; node->where.column = trimToken(token);
+                ss >> token; node->where.op = trimToken(token);
+                ss >> token; node->where.value = trimToken(token);
+                // 去引号
+                std::string& wv = node->where.value;
+                if ((wv.front() == '\'' && wv.back() == '\'') || (wv.front() == '"' && wv.back() == '"'))
+                    wv = wv.substr(1, wv.size() - 2);
+            }
+        }
+    }
     else {
         // 如果都不匹配，判定为未知语法
         node->type = StmtType::UNKNOWN;
