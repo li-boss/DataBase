@@ -9,6 +9,9 @@
 
 namespace fs = std::filesystem;
 
+// 直接访问 DictManager 的全局数据库路径（绕过 GetCurrentDB 编译问题）
+extern std::string g_currentDbDir;
+
 // ─── CreateIndex ────────────────────────────────────────
 ErrorCode IndexManager::CreateIndex(const std::string& indexName,
                                        const std::string& tableName,
@@ -51,7 +54,7 @@ ErrorCode IndexManager::InsertEntry(const std::string& indexName,
     if (err != ErrorCode::DB_OK) return err;
 
     // 追加索引条目
-    std::string idxPath = DictManager::GetCurrentDB() + "/" + indexName + ".idx";
+    std::string idxPath = g_currentDbDir + "/" + indexName + ".idx";
     if (!FileManager::appendIndexEntry(idxPath, keyData, idxHdr.keySize, recordOffset)) {
         return ErrorCode::DB_ERR_FILE_WRITE_FAILED;
     }
@@ -74,7 +77,7 @@ ErrorCode IndexManager::DeleteEntry(const std::string& indexName,
     ErrorCode err = DictManager::GetIndexHeader(indexName, idxHdr);
     if (err != ErrorCode::DB_OK) return err;
 
-    std::string idxPath = DictManager::GetCurrentDB() + "/" + indexName + ".idx";
+    std::string idxPath = g_currentDbDir + "/" + indexName + ".idx";
     if (!FileManager::removeIndexEntry(idxPath, keyData, idxHdr.keySize)) {
         return ErrorCode::DB_ERR_FILE_WRITE_FAILED;
     }
@@ -96,7 +99,7 @@ ErrorCode IndexManager::Lookup(const std::string& indexName,
     ErrorCode err = DictManager::GetIndexHeader(indexName, idxHdr);
     if (err != ErrorCode::DB_OK) return err;
 
-    std::string idxPath = DictManager::GetCurrentDB() + "/" + indexName + ".idx";
+    std::string idxPath = g_currentDbDir + "/" + indexName + ".idx";
     if (!FileManager::lookupIndexEntry(idxPath, keyData, idxHdr.keySize, outOffsets)) {
         // 没找到不算错误，返回 OK 但 outOffsets 为空
         return ErrorCode::DB_OK;
@@ -110,7 +113,7 @@ ErrorCode IndexManager::buildIndexData(const struct TableHeader& hdr,
                                           const std::vector<ColumnDef>& fields,
                                           const struct IndexHeader& idxHdr) {
     // 1. 打开 .trd 文件
-    std::string trdPath = DictManager::GetCurrentDB() + "/" + idxHdr.tableName + ".trd";
+    std::string trdPath = g_currentDbDir + "/" + idxHdr.tableName + ".trd";
     std::ifstream ifs(trdPath, std::ios::binary);
     if (!ifs.is_open()) {
         std::cerr << "[IdxMgr] Cannot open .trd file: " << trdPath << "\n";

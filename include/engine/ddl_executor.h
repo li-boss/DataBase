@@ -8,7 +8,7 @@
 class DDLExecutor {
 public:
     // 原有的核心建表底层实现
-    static bool createTable(const std::string& tableName, const std::vector<FieldDefinition>& fields);
+    static bool createTable(const std::string& tableName, const std::vector<ColumnDef>& fields);
     static bool dropTable(const std::string& tableName);
 
     // 新增：接收 AST 树的顶层统一 DDL 接口

@@ -74,7 +74,7 @@ bool DDLExecutor::dropTable(const std::string& tableName) {
 ExecuteResult DDLExecutor::executeCreateTable(const ASTNode* ast) {
     ExecuteResult res;
     // 解析 ast 中的 columns，目前为了打通链路写固定假字段
-    std::vector<FieldDefinition> dummyFields;
+    std::vector<ColumnDef> dummyFields;
     // ... 未来通过 ast->columns 转换 ...
     
     // 调用底层的建表逻辑

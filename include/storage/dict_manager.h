@@ -162,3 +162,5 @@ public:
     // ─── 内部辅助 ──────────────────────────────────────
     static std::string indexMetaPath();  // 返回 _index_meta.tdf 完整路径
 };
+
+extern std::string g_currentDbDir;  // 当前数据库目录（全局，供其他模块 extern 使用）

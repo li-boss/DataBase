@@ -10,7 +10,7 @@
 namespace fs = std::filesystem;
 
 // ─── 内部全局：当前数据库路径前缀 ────────────────────────
-static std::string g_currentDbDir = ".";   // 默认当前目录
+std::string g_currentDbDir = ".";   // 全局变量，供其他模块通过 extern 访问
 
 // ─── 辅助：生成 .tb / .tdf 文件路径 ──────────────────────
 static std::string tbPath(const std::string& tableName) {
