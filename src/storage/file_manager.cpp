@@ -121,3 +121,124 @@ bool FileManager::appendBlock(const std::string& filepath, const void* data, siz
     ofs.write(reinterpret_cast<const char*>(data), size);
     return ofs.good();
 }
+
+// ─── 索引文件读写（.idx）────────────────────────────
+
+bool FileManager::createIndexFile(const std::string& idxPath, const IndexHeader& hdr) {
+    std::ofstream ofs(idxPath, std::ios::binary);
+    if (!ofs.is_open()) return false;
+    ofs.write(reinterpret_cast<const char*>(&hdr), sizeof(IndexHeader));
+    return ofs.good();
+}
+
+bool FileManager::writeIndexHeader(const std::string& idxPath, const IndexHeader& hdr) {
+    // 使用 readStruct/writeStruct 的 offset 版本，只覆写头部
+    // writeStruct 用 std::ios::in | std::ios::out 打开，支持随机写入
+    return writeStruct(idxPath, hdr, 0);
+}
+
+bool FileManager::readIndexHeader(const std::string& idxPath, IndexHeader& outHdr) {
+    return readStruct(idxPath, outHdr, 0);
+}
+
+bool FileManager::appendIndexEntry(const std::string& idxPath,
+                                     const void* keyData,
+                                     uint32_t keySize,
+                                     uint32_t recordOffset) {
+    std::ofstream ofs(idxPath, std::ios::binary | std::ios::app);
+    if (!ofs.is_open()) return false;
+    // 写入 keyData
+    ofs.write(reinterpret_cast<const char*>(keyData), keySize);
+    // 写入 recordOffset（小端）
+    ofs.write(reinterpret_cast<const char*>(&recordOffset), sizeof(uint32_t));
+    return ofs.good();
+}
+
+bool FileManager::lookupIndexEntry(const std::string& idxPath,
+                                    const void* keyData,
+                                    uint32_t keySize,
+                                    std::vector<uint32_t>& outOffsets) {
+    outOffsets.clear();
+
+    // 1. 读取 IndexHeader
+    IndexHeader hdr;
+    if (!readIndexHeader(idxPath, hdr)) return false;
+
+    // 2. 打开文件，定位到第一条 IndexEntry（跳过 IndexHeader）
+    std::ifstream ifs(idxPath, std::ios::binary);
+    if (!ifs.is_open()) return false;
+    ifs.seekg(sizeof(IndexHeader));
+
+    // 3. 线性扫描所有条目
+    std::vector<char> buf(keySize);
+    uint32_t recOff = 0;
+    size_t entrySize = keySize + sizeof(uint32_t);
+
+    for (uint32_t i = 0; i < hdr.entryCount; ++i) {
+        // 读取 keyData
+        ifs.read(buf.data(), keySize);
+        // 读取 recordOffset
+        ifs.read(reinterpret_cast<char*>(&recOff), sizeof(uint32_t));
+
+        if (!ifs) break;  // 读取失败，停止
+
+        // 比较 keyData
+        if (std::memcmp(buf.data(), keyData, keySize) == 0) {
+            outOffsets.push_back(recOff);
+        }
+    }
+
+    return !outOffsets.empty();
+}
+
+bool FileManager::removeIndexEntry(const std::string& idxPath,
+                                    const void* keyData,
+                                    uint32_t keySize) {
+    // 第一版：临时文件重建方式
+    IndexHeader hdr;
+    if (!readIndexHeader(idxPath, hdr)) return false;
+
+    std::string tmpPath = idxPath + ".tmp";
+    std::ofstream ofs(tmpPath, std::ios::binary);
+    if (!ofs.is_open()) return false;
+
+    // 写入新的 IndexHeader（entryCount 先写 0，最后修正）
+    IndexHeader newHdr = hdr;
+    newHdr.entryCount = 0;
+    ofs.write(reinterpret_cast<const char*>(&newHdr), sizeof(IndexHeader));
+
+    // 读取原文件，过滤条目写入临时文件
+    std::ifstream ifs(idxPath, std::ios::binary);
+    if (!ifs.is_open()) { std::error_code ec; fs::remove(tmpPath, ec); return false; }
+    ifs.seekg(sizeof(IndexHeader));
+
+    const size_t entrySize = keySize + sizeof(uint32_t);
+    char buf[256];
+    uint32_t newCount = 0;
+
+    for (uint32_t i = 0; i < hdr.entryCount; ++i) {
+        ifs.read(buf, entrySize);
+        if (!ifs) break;
+
+        if (std::memcmp(buf, keyData, keySize) != 0) {
+            // 保留：写入临时文件
+            ofs.write(buf, entrySize);
+            ++newCount;
+        }
+    }
+    ofs.close();
+
+    // 修正临时文件的 entryCount
+    newHdr.entryCount = newCount;
+    // 重新打开临时文件，覆写头部
+    std::fstream fs(tmpPath, std::ios::binary | std::ios::in | std::ios::out);
+    if (!fs.is_open()) { std::error_code ec; fs::remove(tmpPath, ec); return false; }
+    fs.write(reinterpret_cast<const char*>(&newHdr), sizeof(IndexHeader));
+    fs.close();
+
+    // 替换原文件
+    std::error_code ec;
+    fs::remove(idxPath, ec);
+    fs::rename(tmpPath, idxPath, ec);
+    return !ec;
+}

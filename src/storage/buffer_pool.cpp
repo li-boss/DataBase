@@ -32,12 +32,16 @@ static bool        g_init      = false;
 // ─── 辅助：查找槽位 ─────────────────────────────────────
 
 static int bp_find(const std::string& fp, uint32_t pid) {
+    std::cerr << "[BP-FIND] searching fp='" << fp << "' pid=" << pid << "\n";
     for (uint32_t i = 0; i < g_capacity; ++i) {
         if (g_pool[i].valid &&
             g_pool[i].pageId == pid &&
-            g_pool[i].filepath == fp)
+            g_pool[i].filepath == fp) {
+            std::cerr << "[BP-FIND] HIT slot=" << i << " stored_fp='" << g_pool[i].filepath << "'\n";
             return static_cast<int>(i);
+        }
     }
+    std::cerr << "[BP-FIND] MISS for '" << fp << "' pid=" << pid << "\n";
     return -1;
 }
 

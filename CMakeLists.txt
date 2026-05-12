@@ -36,6 +36,7 @@ set(STORAGE_SRC
     src/storage/file_manager.cpp
     src/storage/buffer_pool.cpp
     src/storage/dict_manager.cpp
+    src/storage/index_manager.cpp
 )
 
 set(ENGINE_SRC
@@ -84,3 +85,8 @@ add_test(NAME Storage_DictMgr_Test COMMAND test_dict_manager)
 add_executable(test_record_rw tests/test_record_rw.cpp)
 target_link_libraries(test_record_rw PRIVATE RuankoCore)
 add_test(NAME Storage_RecordRW_Test COMMAND test_record_rw)
+
+# 第四阶段：索引重启恢复测试
+add_executable(test_index_recovery tests/test_index_recovery.cpp)
+target_link_libraries(test_index_recovery PRIVATE RuankoCore)
+add_test(NAME Storage_IndexRecovery_Test COMMAND test_index_recovery)

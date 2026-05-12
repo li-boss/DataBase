@@ -105,4 +105,60 @@ public:
      * @brief 更新 .tb 文件中的修改时间戳为当前时间
      */
     static ErrorCode touchModifyTime(const std::string& tableName);
+
+    // ─── 索引元数据管理 ──────────────────────────────────
+
+    /**
+     * @brief 创建索引元数据：写入 _index_meta.tdf + 创建空的 .idx 文件
+     * @param indexName   索引名称（如 idx_students_age）
+     * @param tableName   所属表名
+     * @param columnName  索引字段名
+     * @param columnIndex 字段在表中的序号
+     * @param keyType     索引键类型（DataType 枚举值）
+     * @param keySize     索引键字节数
+     * @return ErrorCode
+     */
+    static ErrorCode CreateIndex(const std::string& indexName,
+                                  const std::string& tableName,
+                                  const std::string& columnName,
+                                  uint32_t columnIndex,
+                                  uint32_t keyType,
+                                  uint32_t keySize);
+
+    /**
+     * @brief 删除索引：从 _index_meta.tdf 移除 + 删除 .idx 文件
+     * @param indexName 索引名称
+     * @return ErrorCode
+     */
+    static ErrorCode DropIndex(const std::string& indexName);
+
+    /**
+     * @brief 列出指定表上所有索引名
+     * @param tableName       表名
+     * @param outIndexNames  输出：索引名列表
+     * @return ErrorCode
+     */
+    static ErrorCode ListIndexes(const std::string& tableName,
+                                  std::vector<std::string>& outIndexNames);
+
+    /**
+     * @brief 加载指定表的所有索引元数据（IndexHeader 列表）
+     * @param tableName     表名
+     * @param outHeaders   输出：IndexHeader 列表
+     * @return ErrorCode
+     */
+    static ErrorCode LoadTableIndexes(const std::string& tableName,
+                                       std::vector<IndexHeader>& outHeaders);
+
+    /**
+     * @brief 根据索引名查找其 IndexHeader
+     * @param indexName    索引名
+     * @param outHeader    输出：索引头信息
+     * @return ErrorCode
+     */
+    static ErrorCode GetIndexHeader(const std::string& indexName,
+                                     IndexHeader& outHeader);
+
+    // ─── 内部辅助 ──────────────────────────────────────
+    static std::string indexMetaPath();  // 返回 _index_meta.tdf 完整路径
 };
