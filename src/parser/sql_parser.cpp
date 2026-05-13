@@ -102,6 +102,23 @@ std::unique_ptr<ASTNode> SqlParser::Parse(const std::string& sql) {
             ss >> token;
             node->db = trimToken(token);
         }
+        else if (subKeyword == "INDEX") {
+            // 解析 CREATE INDEX <索引名> ON <表名>(<列名>)
+            node->type = StmtType::CREATE_INDEX;
+            ss >> token;
+            node->db = trimToken(token); // 索引名（复用 db 字段）
+            ss >> token; // ON
+            ss >> token;
+            node->tbl = trimToken(token); // 表名
+            // 读取 (列名)
+            std::string remainder((std::istreambuf_iterator<char>(ss)), {});
+            size_t start = remainder.find('(');
+            size_t end = remainder.find(')');
+            if (start != std::string::npos && end != std::string::npos && end > start) {
+                std::string colName = remainder.substr(start + 1, end - start - 1);
+                node->columns.push_back(trimToken(colName));
+            }
+        }
     } 
     else if (keyword == "DROP") {
         ss >> token;
@@ -119,6 +136,12 @@ std::unique_ptr<ASTNode> SqlParser::Parse(const std::string& sql) {
             ss >> token;
             node->db = trimToken(token);
         }
+        else if (subKeyword == "INDEX") {
+            // 解析 DROP INDEX <索引名>
+            node->type = StmtType::DROP_INDEX;
+            ss >> token;
+            node->db = trimToken(token); // 索引名（复用 db 字段）
+        }
     }
     else if (keyword == "USE") {
         // 解析 USE <数据库名>
@@ -127,10 +150,23 @@ std::unique_ptr<ASTNode> SqlParser::Parse(const std::string& sql) {
         node->db = trimToken(token);
     }
     else if (keyword == "SHOW") {
-        // 解析 SHOW TABLES
+        // 解析 SHOW TABLES / SHOW INDEXES <表名>
         ss >> token;
-        if (toUpperCase(trimToken(token)) == "TABLES") {
+        std::string showSub = toUpperCase(trimToken(token));
+        if (showSub == "TABLES") {
             node->type = StmtType::SHOW_TABLES;
+        }
+        else if (showSub == "INDEXES" || showSub == "INDEX") {
+            node->type = StmtType::SHOW_INDEXES;
+            if (ss >> token) {
+                std::string fromOrName = toUpperCase(trimToken(token));
+                if (fromOrName == "FROM" || fromOrName == "ON") {
+                    ss >> token;
+                    node->tbl = trimToken(token);
+                } else {
+                    node->tbl = trimToken(token);
+                }
+            }
         }
     }
     else if (keyword == "INSERT") {
