@@ -2,7 +2,7 @@
 #include <string>
 #include <vector>
 
-// 14 种 SQL 语句操作类型
+// 17 种 SQL 语句操作类型
 enum class StmtType {
     CREATE_DB,
     DROP_DB,
@@ -14,6 +14,9 @@ enum class StmtType {
     CREATE_INDEX,    // CREATE INDEX <idx> ON <tbl>(<col>)
     DROP_INDEX,      // DROP INDEX <idx>
     SHOW_INDEXES,    // SHOW INDEXES <tbl> 或 SHOW INDEX FROM <tbl>
+    BEGIN_TX,        // BEGIN
+    COMMIT_TX,       // COMMIT
+    ROLLBACK_TX,     // ROLLBACK
     INSERT,
     SELECT,
     UPDATE,

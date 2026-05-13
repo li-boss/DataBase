@@ -38,6 +38,7 @@ set(STORAGE_SRC
     src/storage/dict_manager.cpp
     src/storage/index_manager.cpp
     src/storage/log_manager.cpp
+    src/storage/transaction_manager.cpp
 )
 
 set(ENGINE_SRC

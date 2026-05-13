@@ -354,6 +354,24 @@ std::unique_ptr<ASTNode> SqlParser::Parse(const std::string& sql) {
             }
         }
     }
+    else if (keyword == "BEGIN" || keyword == "START") {
+        // 解析 BEGIN [TRANSACTION] 或 BEGIN
+        node->type = StmtType::BEGIN_TX;
+        // 消费可选的 TRANSACTION
+        if (ss >> token) {
+            std::string sub = toUpperCase(trimToken(token));
+            if (sub != "TRANSACTION" && sub != "TRAN") {
+                // 不认识的关键字，存到 tbl 作为可能的表名
+                node->tbl = trimToken(token);
+            }
+        }
+    }
+    else if (keyword == "COMMIT") {
+        node->type = StmtType::COMMIT_TX;
+    }
+    else if (keyword == "ROLLBACK") {
+        node->type = StmtType::ROLLBACK_TX;
+    }
     else {
         // 如果都不匹配，判定为未知语法
         node->type = StmtType::UNKNOWN;

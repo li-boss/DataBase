@@ -5,6 +5,7 @@
 #include "storage/index_manager.h"
 #include "storage/dict_manager.h"
 #include "storage/log_manager.h"
+#include "storage/transaction_manager.h"
 #include "common/db_errors.h"
 
 ExecuteResult RecordManager::Execute(const ASTNode* ast) {
@@ -117,6 +118,48 @@ ExecuteResult RecordManager::Execute(const ASTNode* ast) {
             LogManager::log(LogManager::OpType::INSERT,
                 "table=" + ast->tbl + (r.error ? " FAILED" : " OK"),
                 r.error ? LogManager::Level::ERROR : LogManager::Level::INFO);
+            return r;
+        }
+        case StmtType::BEGIN_TX: {
+            ExecuteResult r;
+            // 如果 BEGIN 后面跟了表名，用那个表名；否则用当前活跃的表
+            std::string tbl = ast->tbl;
+            if (tbl.empty()) {
+                // 尝试从事务上下文推断，或返回提示
+                r.msg = "Error: BEGIN TRANSACTION <table_name> — please specify a table.";
+                r.error = 1;
+                LogManager::error(LogManager::OpType::BEGIN_TX, "No table specified");
+                return r;
+            }
+            ErrorCode ec = TransactionManager::begin(tbl);
+            if (ec == ErrorCode::DB_OK) {
+                r.msg = "Query OK: Transaction started on '" + tbl + "'.";
+            } else {
+                r.error = static_cast<int>(ec);
+                r.msg = "Error: " + std::string(getErrorMessage(ec));
+            }
+            return r;
+        }
+        case StmtType::COMMIT_TX: {
+            ExecuteResult r;
+            ErrorCode ec = TransactionManager::commit();
+            if (ec == ErrorCode::DB_OK) {
+                r.msg = "Query OK: Transaction committed.";
+            } else {
+                r.error = static_cast<int>(ec);
+                r.msg = "Error: " + std::string(getErrorMessage(ec));
+            }
+            return r;
+        }
+        case StmtType::ROLLBACK_TX: {
+            ExecuteResult r;
+            ErrorCode ec = TransactionManager::rollback();
+            if (ec == ErrorCode::DB_OK) {
+                r.msg = "Query OK: Transaction rolled back.";
+            } else {
+                r.error = static_cast<int>(ec);
+                r.msg = "Error: " + std::string(getErrorMessage(ec));
+            }
             return r;
         }
         case StmtType::SELECT:
