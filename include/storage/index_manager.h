@@ -9,17 +9,18 @@
 
 /**
  * @file index_manager.h
- * @brief 索引管理器 — 提供索引的高级接口
+ * @brief 索引管理器 — 提供索引的高级接口（表级）
  *
  * 职责：
  *   - 索引的创建与删除（含数据构建）
- *   - INSERT/DELETE 时自动更新索引
+ *   - INSERT/DELETE 后自动更新表上所有索引
  *   - 等值查询时使用索引加速
  *
  * 设计：
- *   - 全部静态方法（与 DictManager 一致）
+ *   - 全部静态方法
  *   - 底层调用 FileManager 的索引文件读写函数
  *   - 索引元数据由 DictManager 管理
+ *   - Engine 层只接触表级接口，不关心具体索引名
  */
 class IndexManager {
 public:
@@ -30,17 +31,11 @@ public:
      * @param indexName   索引名（如 idx_students_age）
      * @param tableName   所属表名
      * @param columnName  索引字段名
-     * @param columnIndex 字段在表中的序号
-     * @param keyType    索引键类型（DataType 枚举值）
-     * @param keySize    索引键字节数
      * @return ErrorCode
      */
     static ErrorCode CreateIndex(const std::string& indexName,
                                   const std::string& tableName,
-                                  const std::string& columnName,
-                                  uint32_t columnIndex,
-                                  uint32_t keyType,
-                                  uint32_t keySize);
+                                  const std::string& columnName);
 
     /**
      * @brief 删除索引（元数据 + 索引文件）
@@ -49,29 +44,14 @@ public:
      */
     static ErrorCode DropIndex(const std::string& indexName);
 
-    // ─── DML 钩子（INSERT/DELETE 时调用）────────────
-
     /**
-     * @brief INSERT 时向索引插入条目
-     * @param indexName    索引名
-     * @param keyData     索引键数据指针
-     * @param recordOffset 记录偏移量（.trd 文件中的字节偏移）
+     * @brief 列出表上所有索引名
+     * @param tableName   表名
+     * @param outNames   输出：索引名列表
      * @return ErrorCode
      */
-    static ErrorCode InsertEntry(const std::string& indexName,
-                                  const void* keyData,
-                                  uint32_t recordOffset);
-
-    /**
-     * @brief DELETE 时从索引删除条目
-     * @param indexName   索引名
-     * @param keyData     索引键数据指针
-     * @param recordOffset 记录偏移量（用于精确定位）
-     * @return ErrorCode
-     */
-    static ErrorCode DeleteEntry(const std::string& indexName,
-                                  const void* keyData,
-                                  uint32_t recordOffset);
+    static ErrorCode ListIndexes(const std::string& tableName,
+                                  std::vector<std::string>& outNames);
 
     // ─── 查询加速 ──────────────────────────────────────
 
@@ -79,21 +59,66 @@ public:
      * @brief 等值查询：根据 key 查找所有匹配的 recordOffset
      * @param indexName    索引名
      * @param keyData      查找键数据指针
+     * @param keySize      键字节数（从 IndexHeader.keySize 传入）
      * @param outOffsets   输出：匹配的 recordOffset 列表
      * @return ErrorCode（DB_OK 即使没找到也返回 OK，需检查 outOffsets.empty()）
      */
     static ErrorCode Lookup(const std::string& indexName,
-                             const void* keyData,
-                             std::vector<uint32_t>& outOffsets);
+                          const void* keyData,
+                          uint32_t keySize,
+                          std::vector<uint32_t>& outOffsets);
+
+    // ─── DML 钩子（INSERT/DELETE 时调用，表级）────────────
+
+    /**
+     * @brief INSERT 后：向表上所有索引插入条目
+     * @param tableName     表名
+     * @param recordOffset 记录偏移量（.trd 文件中的字节偏移）
+     * @param recordData   完整记录数据指针（用于提取各索引的键）
+     * @param fields       字段定义列表（含 offset/length/type）
+     * @return ErrorCode
+     */
+    static ErrorCode InsertEntry(const std::string& tableName,
+                                  uint32_t recordOffset,
+                                  const void* recordData,
+                                  const std::vector<ColumnDef>& fields);
+
+    /**
+     * @brief DELETE 后：从表上所有索引删除条目
+     * @param tableName     表名
+     * @param recordOffset 记录偏移量
+     * @param recordData   完整记录数据指针（用于提取各索引的键）
+     * @param fields       字段定义列表
+     * @return ErrorCode
+     */
+    static ErrorCode DeleteEntry(const std::string& tableName,
+                                 uint32_t recordOffset,
+                                 const void* recordData,
+                                 const std::vector<ColumnDef>& fields);
+
+    /**
+     * @brief UPDATE 后：先从旧记录删索引条目，再向新记录插索引条目
+     * @param tableName     表名
+     * @param recordOffset 记录偏移量
+     * @param oldData      更新前的记录数据
+     * @param newData      更新后的记录数据
+     * @param fields       字段定义列表
+     * @return ErrorCode
+     */
+    static ErrorCode UpdateEntry(const std::string& tableName,
+                                  uint32_t recordOffset,
+                                  const void* oldData,
+                                  const void* newData,
+                                  const std::vector<ColumnDef>& fields);
 
 private:
     // ─── 内部辅助 ──────────────────────────────────────
 
     /**
      * @brief 构建索引数据：扫描全表，为每个记录插入索引条目
-     * @param hdr  表的 TableHeader
-     * @param fields 字段定义列表
-     * @param idxHdr 索引的 IndexHeader（含 keySize/keyType 等）
+     * @param hdr      表的 TableHeader
+     * @param fields   字段定义列表
+     * @param idxHdr   索引的 IndexHeader（含 keySize/columnIndex 等）
      * @return ErrorCode
      */
     static ErrorCode buildIndexData(const struct TableHeader& hdr,

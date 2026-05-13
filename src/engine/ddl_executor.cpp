@@ -9,6 +9,8 @@
 #include <cstring>
 #include <ctime>
 
+extern std::string g_currentDbDir;
+
 bool DDLExecutor::createTable(const std::string& tableName, const std::vector<ColumnDef>& fields) {
     std::string dbDir = DictManager::GetCurrentDB();
     if (dbDir.empty()) {

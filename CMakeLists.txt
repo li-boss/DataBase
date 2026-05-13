@@ -95,7 +95,7 @@ add_executable(test_record_rw tests/test_record_rw.cpp)
 target_link_libraries(test_record_rw PRIVATE RuankoCore)
 add_test(NAME Storage_RecordRW_Test COMMAND test_record_rw)
 
-# 第四阶段：索引重启恢复测试
-add_executable(test_index_recovery tests/test_index_recovery.cpp)
-target_link_libraries(test_index_recovery PRIVATE RuankoCore)
-add_test(NAME Storage_IndexRecovery_Test COMMAND test_index_recovery)
+# 第五阶段：DML + 索引联动集成测试
+add_executable(test_dml_index tests/test_dml_index.cpp)
+target_link_libraries(test_dml_index PRIVATE RuankoCore)
+add_test(NAME DML_Index_Integration_Test COMMAND test_dml_index)
