@@ -54,6 +54,12 @@ public:
      */
     static ErrorCode ShowTables(std::vector<std::string>& outTables);
 
+    /**
+     * @brief 获取当前所在数据库名称/路径
+     * @return 当前所在数据库路径
+     */
+    static std::string GetCurrentDB();
+
     // ─── 核心查询 ────────────────────────────────────────
 
     /**

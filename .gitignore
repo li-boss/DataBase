@@ -17,3 +17,14 @@ bin/
 
 # VS Code 配置文件 (可选)
 .vscode/
+
+# Frontend (web)
+web/node_modules/
+web/dist/
+web/build/
+web/.cache/
+web/.vite/
+web/.parcel-cache/
+web/coverage/
+web/.eslintcache
+web/.DS_Store

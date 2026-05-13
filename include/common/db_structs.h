@@ -12,7 +12,10 @@ enum class DataType : uint32_t {
     TYPE_CHAR = 2,
     TYPE_VARCHAR = 3,
     TYPE_DATETIME = 4,
-    TYPE_BOOLEAN = 5
+    TYPE_BOOLEAN = 5,
+    TYPE_FLOAT = 6,
+    TYPE_DOUBLE = 7,
+    TYPE_TEXT = 8
 };
 
 // 强制编译器使用4字节对齐
