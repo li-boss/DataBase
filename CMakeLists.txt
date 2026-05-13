@@ -37,6 +37,7 @@ set(STORAGE_SRC
     src/storage/buffer_pool.cpp
     src/storage/dict_manager.cpp
     src/storage/index_manager.cpp
+    src/storage/log_manager.cpp
 )
 
 set(ENGINE_SRC
