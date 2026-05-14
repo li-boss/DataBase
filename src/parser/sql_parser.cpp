@@ -355,12 +355,20 @@ std::unique_ptr<ASTNode> SqlParser::Parse(const std::string& sql) {
         }
     }
     else if (keyword == "BEGIN" || keyword == "START") {
-        // 解析 BEGIN [TRANSACTION] 或 BEGIN
+        // 解析 BEGIN [TRANSACTION [tablename]] 或 BEGIN [tablename]
         node->type = StmtType::BEGIN_TX;
-        // 消费可选的 TRANSACTION
+        // 消费可选的 TRANSACTION / TRAN
         if (ss >> token) {
             std::string sub = toUpperCase(trimToken(token));
-            if (sub != "TRANSACTION" && sub != "TRAN") {
+            if (sub == "TRANSACTION" || sub == "TRAN") {
+                // 消费 TRANSACTION 后，尝试读表名
+                if (ss >> token) {
+                    std::string sub2 = toUpperCase(trimToken(token));
+                    if (sub2 != "TRANSACTION" && sub2 != "TRAN") {
+                        node->tbl = trimToken(token);
+                    }
+                }
+            } else {
                 // 不认识的关键字，存到 tbl 作为可能的表名
                 node->tbl = trimToken(token);
             }

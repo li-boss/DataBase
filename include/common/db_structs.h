@@ -62,15 +62,14 @@ struct RecordData {
 struct IndexHeader {
     char      indexName[MAX_NAME_LEN];  // 索引名，如 idx_students_age
     char      tableName[MAX_NAME_LEN];  // 所属表名
-    char      columnName[MAX_NAME_LEN];  // 索引字段名
-    uint32_t  columnIndex;              // 字段在表中的序号
-    uint32_t  keyType;                 // 索引键类型（复用 DataType）
-    uint32_t  entryCount;              // 当前索引条目数
-    uint32_t  createTime;              // 创建时间（Unix 时间戳）
-    uint32_t  keySize;                 // 键的字节数（由类型决定，加速读取）
-    uint32_t  reserved[7];            // 保留字段，对齐用（凑足 8 个 reserved）
+    char      columnName[MAX_NAME_LEN]; // 索引字段名
+    uint32_t  columnIndex;             // 字段在表中的序号
+    uint32_t  keyType;                // 索引键类型（复用 DataType）
+    uint32_t  entryCount;             // 当前索引条目数
+    uint32_t  createTime;
+    uint32_t  reserved[8];            // 保留字段，对齐用
 };
-// sizeof(IndexHeader) 应为：128*3 + 4*5 + 4*7 = 384 + 20 + 28 = 432 字节
+// sizeof(IndexHeader) = 128*3 + 4*5 + 4*8 = 384 + 20 + 32 = 436 字节
 
 // IndexEntry 磁盘布局（变长，不定义为 struct）：
 //   [ keyData: keySize 字节 ][ recordOffset: 4 字节 ]

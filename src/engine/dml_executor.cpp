@@ -291,9 +291,29 @@ ExecuteResult DMLExecutor::selectRecord(const ASTNode* ast) {
             if (DictManager::GetIndexHeader(idxName, idxHdr) != ErrorCode::DB_OK) continue;
             if (std::string(idxHdr.columnName) == ast->where.column) {
                 const ColumnDef& col = fields[idxHdr.columnIndex];
-                std::vector<char> keyBuf(idxHdr.keySize, 0);
-                serializeValue(keyBuf.data(), col, ast->where.value);
-                IndexManager::Lookup(idxName, keyBuf.data(), idxHdr.keySize, matchedOffsets);
+                uint32_t ksz = (idxHdr.keyType == static_cast<uint32_t>(DataType::TYPE_INT) ||
+                                idxHdr.keyType == static_cast<uint32_t>(DataType::TYPE_DATETIME) ||
+                                idxHdr.keyType == static_cast<uint32_t>(DataType::TYPE_BOOLEAN))
+                                   ? 4u : col.length;
+                // keyBuf 存放纯 key 数据（无 record 偏移），直接写入 offset 0
+                std::vector<char> keyBuf(ksz, 0);
+                DataType t = static_cast<DataType>(col.type);
+                if (t == DataType::TYPE_INT || t == DataType::TYPE_DATETIME || t == DataType::TYPE_BOOLEAN) {
+                    uint32_t v = static_cast<uint32_t>(std::atoi(ast->where.value.c_str()));
+                    std::memcpy(keyBuf.data(), &v, sizeof(uint32_t));
+                } else if (t == DataType::TYPE_FLOAT) {
+                    float v = 0.0f; try { v = std::stof(ast->where.value); } catch(...) {}
+                    std::memcpy(keyBuf.data(), &v, sizeof(float));
+                } else if (t == DataType::TYPE_DOUBLE) {
+                    double v = 0.0; try { v = std::stod(ast->where.value); } catch(...) {}
+                    std::memcpy(keyBuf.data(), &v, sizeof(double));
+                } else {
+                    size_t len = ast->where.value.size();
+                    if (len > ksz) len = ksz;
+                    std::memcpy(keyBuf.data(), ast->where.value.c_str(), len);
+                    for (size_t z = len; z < ksz; ++z) keyBuf[z] = '\0';
+                }
+                IndexManager::Lookup(idxName, keyBuf.data(), ksz, matchedOffsets);
                 usedIndex = true;
                 std::cerr << "[DML] Index hit: " << idxName << " (" << matchedOffsets.size() << " rows)\n";
                 break;
@@ -496,10 +516,10 @@ ExecuteResult DMLExecutor::deleteRecord(const ASTNode* ast) {
             uint32_t dstPid = i / rpp, dstOff = (i % rpp) * header.recordSize;
             void* srcPg = BufferPool::GetPage(fd, srcPid);
             char temp[4096]; std::memcpy(temp, static_cast<char*>(srcPg) + srcOff, header.recordSize);
-            BufferPool::ReleasePage(fd, srcPg);
+            BufferPool::ReleasePage(fd, srcPid);
             void* dstPg = BufferPool::GetPage(fd, dstPid);
             std::memcpy(static_cast<char*>(dstPg) + dstOff, temp, header.recordSize);
-            BufferPool::MarkDirty(fd, dstPg); BufferPool::ReleasePage(fd, dstPg);
+            BufferPool::MarkDirty(fd, dstPid); BufferPool::ReleasePage(fd, dstPid);
         }
         totalRecs--;
     }
@@ -508,6 +528,14 @@ ExecuteResult DMLExecutor::deleteRecord(const ASTNode* ast) {
     header.modifyTime = static_cast<uint32_t>(std::time(nullptr));
     FileManager::writeStruct(DictManager::GetCurrentDB() + "/" + ast->tbl + ".tb", header, 0);
     FileManager::CloseFile(fd);
+
+    // DELETE 紧缩后，非删除记录的偏移量已变化，需重建所有索引
+    if (!toDelete.empty()) {
+        ErrorCode rebuildErr = IndexManager::RebuildAllIndexes(ast->tbl);
+        if (rebuildErr != ErrorCode::DB_OK) {
+            std::cerr << "[DML] Warning: Index rebuild after DELETE failed\n";
+        }
+    }
     res.msg = "Query OK: " + std::to_string(toDelete.size()) + " row(s) deleted";
 #endif
     return res;

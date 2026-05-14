@@ -121,15 +121,13 @@ public:
      * @param columnName  索引字段名
      * @param columnIndex 字段在表中的序号
      * @param keyType     索引键类型（DataType 枚举值）
-     * @param keySize     索引键字节数
      * @return ErrorCode
      */
     static ErrorCode CreateIndex(const std::string& indexName,
                                   const std::string& tableName,
                                   const std::string& columnName,
                                   uint32_t columnIndex,
-                                  uint32_t keyType,
-                                  uint32_t keySize);
+                                  uint32_t keyType);
 
     /**
      * @brief 删除索引：从 _index_meta.tdf 移除 + 删除 .idx 文件
@@ -164,6 +162,12 @@ public:
      */
     static ErrorCode GetIndexHeader(const std::string& indexName,
                                      IndexHeader& outHeader);
+
+    /**
+     * @brief 同步内存缓存中的索引元数据（entryCount 等字段变更后调用）
+     * @param hdr 最新的 IndexHeader
+     */
+    static void UpdateIndexCache(const IndexHeader& hdr);
 
     // ─── 内部辅助 ──────────────────────────────────────
     static std::string indexMetaPath();  // 返回 _index_meta.tdf 完整路径

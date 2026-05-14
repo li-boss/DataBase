@@ -6,11 +6,18 @@
 #include <ctime>
 #include <filesystem>
 #include <functional>
+#include <map>
 
 namespace fs = std::filesystem;
 
 // ─── 内部全局：当前数据库路径前缀 ────────────────────────
 std::string g_currentDbDir = ".";   // 全局变量，供其他模块通过 extern 访问
+
+// ─── 索引元数据内存缓存（UseDatabase 时预加载）────────────
+static std::map<std::string, IndexHeader> g_indexCache;  // key: indexName
+
+// 前向声明
+static void forEachIndex(std::function<void(const IndexHeader&)> visitor);
 
 // ─── 辅助：生成 .tb / .tdf 文件路径 ──────────────────────
 static std::string tbPath(const std::string& tableName) {
@@ -62,6 +69,15 @@ ErrorCode DictManager::UseDatabase(const std::string& dbName) {
         return ErrorCode::DB_ERR_DB_NOT_FOUND;
     }
     g_currentDbDir = dbName;
+
+    // 预加载该库所有索引元数据到内存缓存
+    g_indexCache.clear();
+    forEachIndex([](const IndexHeader& h) {
+        g_indexCache[std::string(h.indexName)] = h;
+    });
+
+    std::cerr << "[DictMgr] Loaded " << g_indexCache.size()
+              << " indexes from database: " << dbName << "\n";
     return ErrorCode::DB_OK;
 }
 
@@ -203,8 +219,7 @@ ErrorCode DictManager::CreateIndex(const std::string& indexName,
                                       const std::string& tableName,
                                       const std::string& columnName,
                                       uint32_t columnIndex,
-                                      uint32_t keyType,
-                                      uint32_t keySize) {
+                                      uint32_t keyType) {
     // 1. 检查索引是否已存在
     bool exists = false;
     forEachIndex([&](const IndexHeader& h) {
@@ -226,7 +241,6 @@ ErrorCode DictManager::CreateIndex(const std::string& indexName,
     hdr.keyType     = keyType;
     hdr.entryCount  = 0;
     hdr.createTime  = static_cast<uint32_t>(std::time(nullptr));
-    hdr.keySize     = keySize;
 
     // 4. 追加到 _index_meta.tdf
     const std::string metaPath = indexMetaPath();
@@ -249,6 +263,10 @@ ErrorCode DictManager::CreateIndex(const std::string& indexName,
 
     std::cerr << "[DictMgr] Index created: " << indexName
               << " on " << tableName << "(" << columnName << ")\n";
+
+    // 更新内存缓存
+    g_indexCache[indexName] = hdr;
+
     return ErrorCode::DB_OK;
 }
 
@@ -292,6 +310,10 @@ ErrorCode DictManager::DropIndex(const std::string& indexName) {
     }
 
     std::cerr << "[DictMgr] Index dropped: " << indexName << "\n";
+
+    // 从内存缓存中移除
+    g_indexCache.erase(indexName);
+
     return ErrorCode::DB_OK;
 }
 
@@ -299,11 +321,12 @@ ErrorCode DictManager::DropIndex(const std::string& indexName) {
 ErrorCode DictManager::ListIndexes(const std::string& tableName,
                                       std::vector<std::string>& outIndexNames) {
     outIndexNames.clear();
-    forEachIndex([&](const IndexHeader& h) {
-        if (std::string(h.tableName) == tableName) {
-            outIndexNames.emplace_back(h.indexName);
+    // 优先读缓存（UseDatabase 预加载）
+    for (const auto& kv : g_indexCache) {
+        if (std::string(kv.second.tableName) == tableName) {
+            outIndexNames.emplace_back(kv.first);
         }
-    });
+    }
     return ErrorCode::DB_OK;
 }
 
@@ -322,12 +345,15 @@ ErrorCode DictManager::LoadTableIndexes(const std::string& tableName,
 // GetIndexHeader：根据索引名查找 IndexHeader
 ErrorCode DictManager::GetIndexHeader(const std::string& indexName,
                                          IndexHeader& outHeader) {
-    bool found = false;
-    forEachIndex([&](const IndexHeader& h) {
-        if (std::string(h.indexName) == indexName) {
-            outHeader = h;
-            found = true;
-        }
-    });
-    return found ? ErrorCode::DB_OK : ErrorCode::DB_ERR_INDEX_NOT_FOUND;
+    auto it = g_indexCache.find(indexName);
+    if (it != g_indexCache.end()) {
+        outHeader = it->second;
+        return ErrorCode::DB_OK;
+    }
+    return ErrorCode::DB_ERR_INDEX_NOT_FOUND;
+}
+
+// UpdateIndexCache：同步内存缓存中的索引元数据
+void DictManager::UpdateIndexCache(const IndexHeader& hdr) {
+    g_indexCache[std::string(hdr.indexName)] = hdr;
 }

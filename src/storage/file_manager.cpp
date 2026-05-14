@@ -193,8 +193,8 @@ bool FileManager::lookupIndexEntry(const std::string& idxPath,
 
 bool FileManager::removeIndexEntry(const std::string& idxPath,
                                     const void* keyData,
-                                    uint32_t keySize) {
-    // 第一版：临时文件重建方式
+                                    uint32_t keySize,
+                                    uint32_t recordOffset) {
     IndexHeader hdr;
     if (!readIndexHeader(idxPath, hdr)) return false;
 
@@ -202,39 +202,43 @@ bool FileManager::removeIndexEntry(const std::string& idxPath,
     std::ofstream ofs(tmpPath, std::ios::binary);
     if (!ofs.is_open()) return false;
 
-    // 写入新的 IndexHeader（entryCount 先写 0，最后修正）
     IndexHeader newHdr = hdr;
     newHdr.entryCount = 0;
     ofs.write(reinterpret_cast<const char*>(&newHdr), sizeof(IndexHeader));
 
-    // 读取原文件，过滤条目写入临时文件
     std::ifstream ifs(idxPath, std::ios::binary);
     if (!ifs.is_open()) { std::error_code ec; fs::remove(tmpPath, ec); return false; }
     ifs.seekg(sizeof(IndexHeader));
 
     const size_t entrySize = keySize + sizeof(uint32_t);
-    char buf[256];
+    std::vector<char> buf(entrySize);
     uint32_t newCount = 0;
 
     for (uint32_t i = 0; i < hdr.entryCount; ++i) {
-        ifs.read(buf, entrySize);
+        ifs.read(buf.data(), entrySize);
         if (!ifs) break;
 
-        if (std::memcmp(buf, keyData, keySize) != 0) {
-            // 保留：写入临时文件
-            ofs.write(buf, entrySize);
+        // 读取当前条目的 recordOffset
+        uint32_t entryRecOff;
+        std::memcpy(&entryRecOff, buf.data() + keySize, sizeof(uint32_t));
+
+        // 仅跳过 key + recordOffset 同时匹配的条目
+        if (std::memcmp(buf.data(), keyData, keySize) == 0 && entryRecOff == recordOffset) {
+            // 删除此条目，不写入临时文件
+        } else {
+            ofs.write(buf.data(), entrySize);
             ++newCount;
         }
     }
+    ifs.close();
     ofs.close();
 
     // 修正临时文件的 entryCount
     newHdr.entryCount = newCount;
-    // 重新打开临时文件，覆写头部
-    std::fstream fs(tmpPath, std::ios::binary | std::ios::in | std::ios::out);
-    if (!fs.is_open()) { std::error_code ec; fs::remove(tmpPath, ec); return false; }
-    fs.write(reinterpret_cast<const char*>(&newHdr), sizeof(IndexHeader));
-    fs.close();
+    std::fstream tmpFs(tmpPath, std::ios::binary | std::ios::in | std::ios::out);
+    if (!tmpFs.is_open()) { std::error_code ec; fs::remove(tmpPath, ec); return false; }
+    tmpFs.write(reinterpret_cast<const char*>(&newHdr), sizeof(IndexHeader));
+    tmpFs.close();
 
     // 替换原文件
     std::error_code ec;

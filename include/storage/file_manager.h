@@ -23,13 +23,13 @@
  *
  * 磁盘布局（字节序：little-endian）：
  * ┌──────────────────────────────────────────┐
- * │  IndexHeader（固定 432 字节）           │
- * │  sizeof(IndexHeader) = 128*3 + 4*5 + 4*7 = 432 │
+ * │  IndexHeader（固定 436 字节）           │
+ * │  sizeof(IndexHeader) = 128*3 + 4*5 + 4*8 = 436 │
  * ├──────────────────────────────────────────┤
  * │  IndexEntry 数组（变长，entryCount 条）│
  * │  每条长度 = keySize + 4 字节            │
  * │  布局：[ keyData: keySize 字节 ]        │
- * │        [ recordOffset: uint32_t ]      │
+ * │        [ recordOffset: uint32_t ]        │
  * └──────────────────────────────────────────┘
  *
  * IndexHeader 字段说明：
@@ -40,8 +40,7 @@
  *   keyType                : 索引键类型（复用 DataType 枚举）
  *   entryCount             : 当前索引条目数
  *   createTime             : 创建时间（Unix 时间戳）
- *   keySize                : 键的字节数（加速读取，避免每次算）
- *   reserved[7]           : 保留字段，对齐用
+ *   reserved[8]            : 保留字段，对齐用（keySize 不存于头部，按 keyType 现场计算）
  *
  * Key 存储规则（第一版）：
  *   TYPE_INT    (1): 定长 4 字节，直接存 uint32_t
@@ -142,7 +141,7 @@ public:
     static bool appendBlock(const std::string& filepath, const void* data, size_t size);
 
     // ─── 索引文件读写（.idx）────────────────────────────
-    // 索引文件布局：IndexHeader（432字节）+ IndexEntry 数组（变长）
+    // 索引文件布局：IndexHeader（436字节）+ IndexEntry 数组（变长）
     // IndexEntry = [keyData: keySize 字节][recordOffset: uint32_t]
 
     /**
@@ -196,14 +195,16 @@ public:
                                  std::vector<uint32_t>& outOffsets);
 
     /**
-     * @brief 删除索引条目（重建文件方式，第一版）
-     *        遍历所有条目，跳过 key 匹配的条目，重写 .idx 文件
-     * @param idxPath  索引文件路径
-     * @param keyData  要删除的键数据指针
-     * @param keySize  键字节数
+     * @brief 删除索引条目（重建文件方式）
+     *        遍历所有条目，跳过 key + recordOffset 精确匹配的条目，重写 .idx 文件
+     * @param idxPath       索引文件路径
+     * @param keyData       要删除的键数据指针
+     * @param keySize       键字节数
+     * @param recordOffset  要删除的记录偏移量
      * @return true 成功（即使没找到也算成功）
      */
     static bool removeIndexEntry(const std::string& idxPath,
                                  const void* keyData,
-                                 uint32_t keySize);
+                                 uint32_t keySize,
+                                 uint32_t recordOffset);
 };

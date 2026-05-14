@@ -59,7 +59,7 @@ public:
      * @brief 等值查询：根据 key 查找所有匹配的 recordOffset
      * @param indexName    索引名
      * @param keyData      查找键数据指针
-     * @param keySize      键字节数（从 IndexHeader.keySize 传入）
+     * @param keySize      键字节数（根据 keyType 计算：INT/DATETIME/BOOLEAN 为 4 字节，其余为字段长度）
      * @param outOffsets   输出：匹配的 recordOffset 列表
      * @return ErrorCode（DB_OK 即使没找到也返回 OK，需检查 outOffsets.empty()）
      */
@@ -118,10 +118,19 @@ private:
      * @brief 构建索引数据：扫描全表，为每个记录插入索引条目
      * @param hdr      表的 TableHeader
      * @param fields   字段定义列表
-     * @param idxHdr   索引的 IndexHeader（含 keySize/columnIndex 等）
+     * @param idxHdr   索引的 IndexHeader（含 columnIndex/keyType 等）
      * @return ErrorCode
      */
     static ErrorCode buildIndexData(const struct TableHeader& hdr,
                                      const std::vector<ColumnDef>& fields,
                                      const struct IndexHeader& idxHdr);
+
+public:
+    /**
+     * @brief 重建指定表的所有索引（DELETE 紧缩后调用）
+     *        扫描全表数据，为每个索引重新生成 .idx 文件
+     * @param tableName 表名
+     * @return ErrorCode
+     */
+    static ErrorCode RebuildAllIndexes(const std::string& tableName);
 };

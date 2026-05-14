@@ -2,6 +2,7 @@
 #include "../../include/storage/index_manager.h"
 #include "../../include/storage/dict_manager.h"
 #include "../../include/storage/file_manager.h"
+#include "../../include/storage/buffer_pool.h"
 
 #include <iostream>
 #include <cstring>
@@ -42,7 +43,7 @@ ErrorCode IndexManager::CreateIndex(const std::string& indexName,
     // 2. 调用 DictManager 创建索引元数据 + 空 .idx 文件
     err = DictManager::CreateIndex(indexName, tableName, columnName,
                                      static_cast<uint32_t>(columnIndex),
-                                     keyType, keySize);
+                                     keyType);
     if (err != ErrorCode::DB_OK) return err;
 
     // 3. 获取索引头信息，构建索引数据（扫描全表）
@@ -94,7 +95,11 @@ ErrorCode IndexManager::InsertEntry(const std::string& tableName,
         const char* keyData = static_cast<const char*>(recordData) + col.offset;
 
         std::string idxPath = g_currentDbDir + "/" + idxName + ".idx";
-        if (!FileManager::appendIndexEntry(idxPath, keyData, idxHdr.keySize, recordOffset)) {
+        uint32_t ksz = (idxHdr.keyType == static_cast<uint32_t>(DataType::TYPE_INT) ||
+                        idxHdr.keyType == static_cast<uint32_t>(DataType::TYPE_DATETIME) ||
+                        idxHdr.keyType == static_cast<uint32_t>(DataType::TYPE_BOOLEAN))
+                           ? 4u : fields[idxHdr.columnIndex].length;
+        if (!FileManager::appendIndexEntry(idxPath, keyData, ksz, recordOffset)) {
             return ErrorCode::DB_ERR_FILE_WRITE_FAILED;
         }
 
@@ -123,7 +128,11 @@ ErrorCode IndexManager::DeleteEntry(const std::string& tableName,
         const char* keyData = static_cast<const char*>(recordData) + col.offset;
 
         std::string idxPath = g_currentDbDir + "/" + idxName + ".idx";
-        if (!FileManager::removeIndexEntry(idxPath, keyData, idxHdr.keySize)) {
+        uint32_t ksz = (idxHdr.keyType == static_cast<uint32_t>(DataType::TYPE_INT) ||
+                        idxHdr.keyType == static_cast<uint32_t>(DataType::TYPE_DATETIME) ||
+                        idxHdr.keyType == static_cast<uint32_t>(DataType::TYPE_BOOLEAN))
+                           ? 4u : fields[idxHdr.columnIndex].length;
+        if (!FileManager::removeIndexEntry(idxPath, keyData, ksz, recordOffset)) {
             return ErrorCode::DB_ERR_FILE_WRITE_FAILED;
         }
     }
@@ -145,6 +154,9 @@ ErrorCode IndexManager::UpdateEntry(const std::string& tableName,
 ErrorCode IndexManager::buildIndexData(const struct TableHeader& hdr,
                                         const std::vector<ColumnDef>& fields,
                                         const struct IndexHeader& idxHdr) {
+    // ── 刷盘：确保 BufferPool 中脏页写回磁盘，避免 ifstream 读到旧数据 ──
+    BufferPool::flushAll();
+
     std::string trdPath = g_currentDbDir + "/" + std::string(idxHdr.tableName) + ".trd";
     std::ifstream ifs(trdPath, std::ios::binary);
     if (!ifs.is_open()) {
@@ -153,16 +165,20 @@ ErrorCode IndexManager::buildIndexData(const struct TableHeader& hdr,
     }
 
     const ColumnDef& col = fields[idxHdr.columnIndex];
-    std::vector<char> keyBuf(idxHdr.keySize);
+    uint32_t ks = (idxHdr.keyType == static_cast<uint32_t>(DataType::TYPE_INT) ||
+                   idxHdr.keyType == static_cast<uint32_t>(DataType::TYPE_DATETIME) ||
+                   idxHdr.keyType == static_cast<uint32_t>(DataType::TYPE_BOOLEAN))
+                      ? 4u : fields[idxHdr.columnIndex].length;
+    std::vector<char> keyBuf(ks);
     uint32_t recordOffset = 0;
 
     for (uint32_t i = 0; i < hdr.recordCount; ++i) {
         ifs.seekg(recordOffset + col.offset);
-        ifs.read(keyBuf.data(), idxHdr.keySize);
+        ifs.read(keyBuf.data(), ks);
         if (!ifs.good()) break;
 
         std::string idxPath = g_currentDbDir + "/" + std::string(idxHdr.indexName) + ".idx";
-        if (!FileManager::appendIndexEntry(idxPath, keyBuf.data(), idxHdr.keySize, recordOffset)) {
+        if (!FileManager::appendIndexEntry(idxPath, keyBuf.data(), ks, recordOffset)) {
             return ErrorCode::DB_ERR_FILE_WRITE_FAILED;
         }
 
@@ -175,8 +191,46 @@ ErrorCode IndexManager::buildIndexData(const struct TableHeader& hdr,
     idxHdrToWrite.entryCount = hdr.recordCount;
     std::string idxPath = g_currentDbDir + "/" + std::string(idxHdr.indexName) + ".idx";
     FileManager::writeIndexHeader(idxPath, idxHdrToWrite);
+    // 同步内存缓存，避免 InsertEntry 从缓存读到旧 entryCount
+    DictManager::UpdateIndexCache(idxHdrToWrite);
 
     std::cerr << "[IdxMgr] Index built: " << idxHdr.indexName
               << " with " << hdr.recordCount << " entries\n";
+    return ErrorCode::DB_OK;
+}
+
+// ─── RebuildAllIndexes（DELETE 紧缩后调用）───────────
+ErrorCode IndexManager::RebuildAllIndexes(const std::string& tableName) {
+    TableHeader hdr;
+    std::vector<ColumnDef> fields;
+    ErrorCode err = DictManager::loadTable(tableName, hdr, fields);
+    if (err != ErrorCode::DB_OK) return err;
+
+    std::vector<std::string> indexes;
+    err = DictManager::ListIndexes(tableName, indexes);
+    if (err != ErrorCode::DB_OK) return err;
+
+    for (const auto& idxName : indexes) {
+        IndexHeader idxHdr;
+        err = DictManager::GetIndexHeader(idxName, idxHdr);
+        if (err != ErrorCode::DB_OK) continue;
+
+        idxHdr.entryCount = 0;
+        std::string idxPath = g_currentDbDir + "/" + idxName + ".idx";
+        // 截断 .idx 文件为仅含 IndexHeader（清除旧条目，避免 append 后读旧数据）
+        {
+            std::ofstream truncateOfs(idxPath, std::ios::binary | std::ios::trunc);
+            if (truncateOfs.is_open()) {
+                truncateOfs.write(reinterpret_cast<const char*>(&idxHdr), sizeof(IndexHeader));
+            }
+        }
+
+        err = buildIndexData(hdr, fields, idxHdr);
+        if (err != ErrorCode::DB_OK) {
+            std::cerr << "[IdxMgr] Warning: rebuild '" << idxName << "' failed\n";
+        }
+    }
+
+    std::cerr << "[IdxMgr] Rebuilt " << indexes.size() << " indexes on: " << tableName << "\n";
     return ErrorCode::DB_OK;
 }
