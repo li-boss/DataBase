@@ -66,10 +66,15 @@ ExecuteResult RecordManager::Execute(const ASTNode* ast) {
             ExecuteResult r;
             std::string idxName = ast->db;
             std::string tblName = ast->tbl;
-            std::string colName = ast->columns.empty() ? "" : ast->columns[0];
-            ErrorCode ec = IndexManager::CreateIndex(idxName, tblName, colName);
+            std::vector<std::string> colNames = ast->columns;
+            ErrorCode ec = IndexManager::CreateIndex(idxName, tblName, colNames);
             if (ec == ErrorCode::DB_OK) {
-                r.msg = "Query OK: Index '" + idxName + "' created on " + tblName + "(" + colName + ").";
+                std::string colsStr;
+                for (size_t i = 0; i < colNames.size(); ++i) {
+                    if (i > 0) colsStr += ", ";
+                    colsStr += colNames[i];
+                }
+                r.msg = "Query OK: Index '" + idxName + "' created on " + tblName + "(" + colsStr + ").";
                 LogManager::log(LogManager::OpType::CREATE_INDEX, r.msg);
             } else {
                 r.error = static_cast<int>(ec);

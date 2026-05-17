@@ -55,6 +55,11 @@
  *   - 查找使用线性扫描（条目少时足够演示）
  *   - 索引文件不使用 BufferPool，直接 fstream 读写
  *   - 后续可升级为 B+ 树结构
+ *
+ * 第二版（B+ Tree）：
+ *   - 已升级为 B+ Tree 索引结构（内部委托给 BPlusTree）
+ *   - 支持范围查询（<, >, <=, >=），通过叶子链表 O(log N + K)
+ *   - IndexHeader.reserved[0..2] 存储 B+ Tree 元数据（rootPageId/nextPageId/keySize）
  */
 
 class FileManager {
@@ -207,4 +212,34 @@ public:
                                  const void* keyData,
                                  uint32_t keySize,
                                  uint32_t recordOffset);
+
+    /**
+     * @brief 范围查找索引条目（线性扫描，支持 <, >, <=, >=）
+     * @param idxPath       索引文件路径
+     * @param keyData       查找键数据指针
+     * @param keySize       键字节数
+     * @param keyType       键类型（DataType 枚举值，用于数值比较）
+     * @param op            比较运算符（<, >, <=, >=）
+     * @param outOffsets    输出：匹配的 recordOffset 列表
+     * @return true 找到至少一条
+     */
+    static bool lookupIndexRange(const std::string& idxPath,
+                                 const void* keyData,
+                                 uint32_t keySize,
+                                 uint32_t keyType,
+                                 const std::string& op,
+                                 std::vector<uint32_t>& outOffsets);
+
+    /**
+     * @brief 复合索引前缀范围查找
+     *        用于复合索引末列范围查询（如 WHERE a=1 AND b>5 ON INDEX(a,b)）
+     *        内部委托给 BPlusTree::searchPrefixRange
+     */
+    static bool lookupIndexPrefixRange(const std::string& idxPath,
+                                       const void* prefixKey,
+                                       uint32_t prefixSize,
+                                       const void* fullKey,
+                                       uint32_t keySize,
+                                       const std::string& op,
+                                       std::vector<uint32_t>& outOffsets);
 };

@@ -38,6 +38,17 @@ public:
                                   const std::string& columnName);
 
     /**
+     * @brief 创建复合索引并构建索引数据（扫描全表）
+     * @param indexName    索引名
+     * @param tableName    所属表名
+     * @param columnNames  索引字段名列表（如 {"name","age"}）
+     * @return ErrorCode
+     */
+    static ErrorCode CreateIndex(const std::string& indexName,
+                                  const std::string& tableName,
+                                  const std::vector<std::string>& columnNames);
+
+    /**
      * @brief 删除索引（元数据 + 索引文件）
      * @param indexName 索引名
      * @return ErrorCode
@@ -67,6 +78,23 @@ public:
                           const void* keyData,
                           uint32_t keySize,
                           std::vector<uint32_t>& outOffsets);
+
+    /**
+     * @brief 范围查询：根据 key 和比较运算符查找所有匹配的 recordOffset
+     * @param indexName    索引名
+     * @param keyData      查找键数据指针
+     * @param keySize      键字节数
+     * @param keyType      键类型（DataType 枚举值）
+     * @param op           比较运算符（<, >, <=, >=）
+     * @param outOffsets   输出：匹配的 recordOffset 列表
+     * @return ErrorCode
+     */
+    static ErrorCode LookupRange(const std::string& indexName,
+                               const void* keyData,
+                               uint32_t keySize,
+                               uint32_t keyType,
+                               const std::string& op,
+                               std::vector<uint32_t>& outOffsets);
 
     // ─── DML 钩子（INSERT/DELETE 时调用，表级）────────────
 
@@ -133,4 +161,30 @@ public:
      * @return ErrorCode
      */
     static ErrorCode RebuildAllIndexes(const std::string& tableName);
+
+    // ─── 复合索引工具（公开，供 DML Executor / DDL Executor 使用）──
+
+    /// 返回单列索引 key 的字节长度
+    static uint32_t GetColumnKeySize(const ColumnDef& col);
+
+    /// 返回复合索引的总 key 字节长度（所有列 key 之和）
+    static uint32_t GetCompositeKeySize(const IndexHeader& idxHdr,
+                                         const std::vector<ColumnDef>& fields);
+
+    /// 从记录二进制中提取复合索引 key（调用方保证 outBuf >= GetCompositeKeySize()）
+    static void BuildCompositeKey(const IndexHeader& idxHdr,
+                                   const std::vector<ColumnDef>& fields,
+                                   const void* recordData,
+                                   char* outBuf);
+
+    /// 返回复合索引的列数（1 = 单列，2~4 = 复合）
+    static uint32_t GetCompositeColumnCount(const IndexHeader& idxHdr);
+
+    /// 返回复合索引的各列在表中的序号
+    static void GetCompositeColumnIndices(const IndexHeader& idxHdr,
+                                           uint32_t* outIndices);
+
+    /// 解析 columnName 中 '|' 分隔的多列名
+    static void GetCompositeColumnNames(const IndexHeader& idxHdr,
+                                         std::vector<std::string>& outNames);
 };

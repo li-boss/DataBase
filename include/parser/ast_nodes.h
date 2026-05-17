@@ -27,12 +27,35 @@ enum class StmtType {
 // ALTER TABLE 操作类型
 enum class AlterAction { ADD_COLUMN, DROP_COLUMN, MODIFY_COLUMN };
 
-// 简单的单条件过滤表达，比如 id = 5
+// 逻辑运算符
+enum class LogicOp { AND, OR };
+
+// 单个过滤条件
+struct SingleCondition {
+    std::string column;
+    std::string op;      // =, !=, <, >, <=, >=
+    std::string value;
+};
+
+// 复合条件过滤表达（支持 AND / OR）
 struct WhereClause {
     bool hasWhere = false;
-    std::string column;
-    std::string op;
-    std::string value;
+    std::vector<SingleCondition> conditions;  // 条件列表
+    std::vector<LogicOp> logicOps;            // conditions[i] 与 conditions[i+1] 的逻辑运算符
+
+    // 向后兼容：返回第一个条件的引用（无 WHERE 时返回空引用）
+    const std::string& column() const {
+        static const std::string emptyStr;
+        return conditions.empty() ? emptyStr : conditions[0].column;
+    }
+    const std::string& op() const {
+        static const std::string emptyStr;
+        return conditions.empty() ? emptyStr : conditions[0].op;
+    }
+    const std::string& value() const {
+        static const std::string emptyStr;
+        return conditions.empty() ? emptyStr : conditions[0].value;
+    }
 };
 
 // 抽象语法树节点 (AST)，所有有效 SQL 最终都会被转成这个结构体交给 Engine 处理

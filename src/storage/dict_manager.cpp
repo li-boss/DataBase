@@ -241,6 +241,7 @@ ErrorCode DictManager::CreateIndex(const std::string& indexName,
     hdr.keyType     = keyType;
     hdr.entryCount  = 0;
     hdr.createTime  = static_cast<uint32_t>(std::time(nullptr));
+    hdr.reserved[1] = 1;  // nextPageId 起始值，避免与 rootPageId=0（空树哨兵）冲突
 
     // 4. 追加到 _index_meta.tdf
     const std::string metaPath = indexMetaPath();
@@ -265,6 +266,77 @@ ErrorCode DictManager::CreateIndex(const std::string& indexName,
               << " on " << tableName << "(" << columnName << ")\n";
 
     // 更新内存缓存
+    g_indexCache[indexName] = hdr;
+
+    return ErrorCode::DB_OK;
+}
+
+// CreateIndex 多列重载（复合索引）
+ErrorCode DictManager::CreateIndex(const std::string& indexName,
+                                      const std::string& tableName,
+                                      const std::vector<std::string>& columnNames,
+                                      const std::vector<uint32_t>& columnIndices,
+                                      const std::vector<uint32_t>& keyTypes,
+                                      const std::vector<ColumnDef>& fields) {
+    if (columnNames.empty() || columnNames.size() > 4)
+        return ErrorCode::DB_INVALID_PARAM;
+
+    // 1. 检查索引是否已存在
+    bool exists = false;
+    forEachIndex([&](const IndexHeader& h) {
+        if (std::string(h.indexName) == indexName) exists = true;
+    });
+    if (exists) return ErrorCode::DB_ERR_INDEX_EXISTS;
+
+    // 2. 检查表是否存在
+    if (!FileManager::fileExists(tbPath(tableName)))
+        return ErrorCode::DB_ERR_TABLE_NOT_FOUND;
+
+    // 3. 构造 IndexHeader
+    IndexHeader hdr{};
+    std::strncpy(hdr.indexName, indexName.c_str(), MAX_NAME_LEN - 1);
+    std::strncpy(hdr.tableName, tableName.c_str(), MAX_NAME_LEN - 1);
+
+    std::string joinedNames;
+    for (size_t i = 0; i < columnNames.size(); ++i) {
+        if (i > 0) joinedNames += '|';
+        joinedNames += columnNames[i];
+    }
+    std::strncpy(hdr.columnName, joinedNames.c_str(), MAX_NAME_LEN - 1);
+
+    hdr.columnIndex = columnIndices[0];
+    hdr.keyType     = keyTypes[0];
+    hdr.entryCount  = 0;
+    hdr.createTime  = static_cast<uint32_t>(std::time(nullptr));
+    hdr.reserved[1] = 1;  // nextPageId 起始值，避免与 rootPageId=0（空树哨兵）冲突
+
+    hdr.reserved[3] = static_cast<uint32_t>(columnNames.size());
+    for (size_t i = 1; i < columnNames.size() && i <= 3; ++i) {
+        hdr.reserved[3 + i] = columnIndices[i];
+    }
+
+    // 4. 追加到 _index_meta.tdf
+    const std::string metaPath = indexMetaPath();
+    if (!FileManager::fileExists(metaPath))
+        FileManager::createFile(metaPath);
+    std::ofstream ofs(metaPath, std::ios::binary | std::ios::app);
+    if (!ofs.is_open()) return ErrorCode::DB_ERR_FILE_WRITE_FAILED;
+    ofs.write(reinterpret_cast<const char*>(&hdr), sizeof(IndexHeader));
+
+    // 5. 创建空的 .idx 文件
+    const std::string idxPath = g_currentDbDir + "/" + indexName + ".idx";
+    std::ofstream idxFile(idxPath, std::ios::binary);
+    if (!idxFile.is_open()) {
+        std::cerr << "[DictMgr] Warning: failed to create .idx file: " << idxPath << "\n";
+        return ErrorCode::DB_ERR_FILE_WRITE_FAILED;
+    }
+    idxFile.write(reinterpret_cast<const char*>(&hdr), sizeof(IndexHeader));
+    idxFile.close();
+
+    std::cerr << "[DictMgr] Composite index created: " << indexName
+              << " on " << tableName << "(" << joinedNames << "), "
+              << columnNames.size() << " columns\n";
+
     g_indexCache[indexName] = hdr;
 
     return ErrorCode::DB_OK;

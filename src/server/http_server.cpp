@@ -13,6 +13,7 @@
 #include "storage/dict_manager.h"
 #include "storage/file_manager.h"
 #include "storage/buffer_pool.h"
+#include "storage/index_manager.h"
 #include <iostream>
 #include <filesystem>
 #include <sstream>
@@ -349,6 +350,10 @@ void HttpServer::Start(int port) {
         void* pageData = BufferPool::GetPage(fd, pid);
         if (pageData) {
             char* recordPtr = static_cast<char*>(pageData) + offset;
+            // 保存旧记录用于索引同步
+            std::vector<char> oldRecord(header.recordSize, 0);
+            std::memcpy(oldRecord.data(), recordPtr, header.recordSize);
+
             for (size_t i = 0; i < fields.size() && i < row.size(); ++i) {
                 std::string strVal = row[i].get<std::string>();
                 switch (fields[i].type) {
@@ -372,7 +377,6 @@ void HttpServer::Start(int port) {
                     }
                     case DataType::TYPE_BOOLEAN: {
                         uint8_t bval = 0;
-                        // 兼容 true/false/T/F/1/0/YES/NO
                         std::string upper = strVal;
                         for (auto& c : upper) c = static_cast<unsigned char>(std::toupper(c));
                         if (upper == "TRUE" || upper == "T" || upper == "1" || upper == "YES" || upper == "Y")
@@ -387,11 +391,23 @@ void HttpServer::Start(int port) {
                     }
                 }
             }
+
+            // ── 索引同步：用新旧记录更新索引 ──
+            std::vector<char> newRecord(header.recordSize, 0);
+            std::memcpy(newRecord.data(), recordPtr, header.recordSize);
+            uint32_t recOffset = rowIndex * header.recordSize;
+            ErrorCode idxErr = IndexManager::UpdateEntry(table, recOffset, oldRecord.data(), newRecord.data(), fields);
+            if (idxErr != ErrorCode::DB_OK) {
+                std::cerr << "[HTTP] Warning: Index update failed: " << getErrorMessage(idxErr) << "\n";
+            }
+
             BufferPool::MarkDirty(fd, pid);
             BufferPool::ReleasePage(fd, pid);
         }
 
         FileManager::CloseFile(fd);
+        // 更新修改时间
+        DictManager::touchModifyTime(table);
         j["ok"] = true;
         res.set_content(j.dump(), "application/json");
     });
@@ -420,6 +436,22 @@ void HttpServer::Start(int port) {
 
         uint32_t recordsPerPage = 4080 / header.recordSize;
         if (recordsPerPage == 0) recordsPerPage = 1;
+
+        // ── 先对即将删除的行同步索引删除 ──
+        {
+            uint32_t delPid = rowIndex / recordsPerPage;
+            uint32_t delOffset = (rowIndex % recordsPerPage) * header.recordSize;
+            void* delPage = BufferPool::GetPage(fd, delPid);
+            if (delPage) {
+                char* delRp = static_cast<char*>(delPage) + delOffset;
+                uint32_t recOffset = rowIndex * header.recordSize;
+                ErrorCode idxErr = IndexManager::DeleteEntry(table, recOffset, delRp, fields);
+                if (idxErr != ErrorCode::DB_OK) {
+                    std::cerr << "[HTTP] Warning: Index delete failed: " << getErrorMessage(idxErr) << "\n";
+                }
+                BufferPool::ReleasePage(fd, delPid);
+            }
+        }
 
         // 向前覆盖，相当于删除这一行
         for (uint32_t i = rowIndex; i < header.recordCount - 1; ++i) {
@@ -451,6 +483,95 @@ void HttpServer::Start(int port) {
         auto body = json::parse(req.body);
         std::string sql = body.value("sql", "");
         json j = ExecSql(sql);
+        res.set_content(j.dump(), "application/json");
+    });
+
+    // 10. SQL 脚本批量执行（扩展 A：读取 SQL 脚本文件，解析并批量执行）
+    svr.Post("/api/script", [](const httplib::Request& req, httplib::Response& res) {
+        auto body = json::parse(req.body);
+        std::string script = body.value("sql", "");
+
+        json j;
+        j["ok"] = true;
+
+        if (script.empty()) {
+            j["ok"] = false;
+            j["error"] = "Script content is empty.";
+            res.set_content(j.dump(), "application/json");
+            return;
+        }
+
+        // 按分号切分，跳过空语句
+        std::vector<std::string> statements;
+        std::string current;
+        bool inString = false;
+        char stringChar = 0;
+
+        for (size_t i = 0; i < script.size(); ++i) {
+            char ch = script[i];
+            if (!inString && (ch == '\'' || ch == '"')) {
+                inString = true;
+                stringChar = ch;
+            } else if (inString && ch == stringChar) {
+                inString = false;
+            } else if (!inString && ch == ';') {
+                // 去除前后空白
+                size_t s = 0, e = current.size();
+                while (s < e && std::isspace(static_cast<unsigned char>(current[s]))) ++s;
+                while (e > s && std::isspace(static_cast<unsigned char>(current[e - 1]))) --e;
+                std::string stmt = current.substr(s, e - s);
+                if (!stmt.empty()) {
+                    statements.push_back(stmt);
+                }
+                current.clear();
+                continue;
+            }
+            current += ch;
+        }
+
+        // 处理最后一条（可能没有分号结尾）
+        {
+            size_t s = 0, e = current.size();
+            while (s < e && std::isspace(static_cast<unsigned char>(current[s]))) ++s;
+            while (e > s && std::isspace(static_cast<unsigned char>(current[e - 1]))) --e;
+            std::string stmt = current.substr(s, e - s);
+            if (!stmt.empty()) {
+                statements.push_back(stmt);
+            }
+        }
+
+        int total = static_cast<int>(statements.size());
+        int okCount = 0;
+        int failCount = 0;
+        json results = json::array();
+
+        for (int i = 0; i < total; ++i) {
+            json r = ExecSql(statements[i] + ";");
+            json entry;
+            entry["index"] = i + 1;
+            entry["sql"] = statements[i].length() > 80
+                               ? statements[i].substr(0, 77) + "..."
+                               : statements[i];
+            entry["ok"] = r.value("ok", false);
+
+            if (!r.value("ok", false)) {
+                entry["error"] = r.value("error", "Unknown error");
+                failCount++;
+            } else {
+                entry["msg"] = r.value("msg", "");
+                okCount++;
+            }
+            results.push_back(entry);
+        }
+
+        j["total"] = total;
+        j["okCount"] = okCount;
+        j["failCount"] = failCount;
+        j["results"] = results;
+        j["msg"] = std::to_string(okCount) + " succeeded, " +
+                   std::to_string(failCount) + " failed (total " +
+                   std::to_string(total) + ")";
+
         res.set_content(j.dump(), "application/json");
     });
 

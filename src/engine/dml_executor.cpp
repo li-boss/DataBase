@@ -262,6 +262,49 @@ static bool evaluateWhere(const std::string& fieldValue, const std::string& op,
     return false;
 }
 
+// ─── 复合 WHERE 评估：对一条记录的所有条件做 AND/OR 组合 ───
+static bool evaluateCompoundWhere(const std::vector<std::string>& row,
+                                  const WhereClause& where,
+                                  const std::vector<ColumnDef>& fields) {
+    if (!where.hasWhere || where.conditions.empty()) return true;
+
+    // 逐条件求值
+    std::vector<bool> results;
+    for (const auto& cond : where.conditions) {
+        int colIndex = -1;
+        DataType colType = DataType::TYPE_VARCHAR;
+        for (size_t ci = 0; ci < fields.size(); ++ci) {
+            if (fields[ci].fieldName == cond.column) {
+                colIndex = static_cast<int>(ci);
+                colType = fields[ci].type;
+                break;
+            }
+        }
+        if (colIndex < 0 || colIndex >= static_cast<int>(row.size())) {
+            results.push_back(false);
+        } else {
+            results.push_back(evaluateWhere(row[colIndex], cond.op, cond.value, colType));
+        }
+    }
+
+    // 按 logicOps 组合（默认隐含 AND）
+    bool finalResult = results[0];
+    for (size_t i = 0; i < where.logicOps.size(); ++i) {
+        if (where.logicOps[i] == LogicOp::AND) {
+            finalResult = finalResult && results[i + 1];
+        } else { // OR
+            finalResult = finalResult || results[i + 1];
+        }
+    }
+    return finalResult;
+}
+
+// ─── 根据 ColumnDef 类型做数值/字符串比较 ───
+static bool evaluateSingleCondition(const std::string& fieldValue,
+                                     const SingleCondition& cond, DataType type) {
+    return evaluateWhere(fieldValue, cond.op, cond.value, type);
+}
+
 // ─── SELECT ──────────────────────────────────────────────
 ExecuteResult DMLExecutor::selectRecord(const ASTNode* ast) {
     ExecuteResult res;
@@ -280,44 +323,167 @@ ExecuteResult DMLExecutor::selectRecord(const ASTNode* ast) {
 
     for (const auto& f : fields) res.headers.push_back(f.fieldName);
 
-    // ── 索引加速（等值查询 WHERE col = val）──
+    // ── 索引加速（等值查询 + 范围查询）──
     std::vector<uint32_t> matchedOffsets;
     bool usedIndex = false;
-    if (ast->where.hasWhere && (ast->where.op == "=" || ast->where.op == "==")) {
+    if (ast->where.hasWhere && !ast->where.conditions.empty()) {
         std::vector<std::string> indexes;
         DictManager::ListIndexes(ast->tbl, indexes);
+
+        // ── 复合索引优先匹配 ──
         for (const auto& idxName : indexes) {
             IndexHeader idxHdr;
             if (DictManager::GetIndexHeader(idxName, idxHdr) != ErrorCode::DB_OK) continue;
-            if (std::string(idxHdr.columnName) == ast->where.column) {
-                const ColumnDef& col = fields[idxHdr.columnIndex];
-                uint32_t ksz = (idxHdr.keyType == static_cast<uint32_t>(DataType::TYPE_INT) ||
-                                idxHdr.keyType == static_cast<uint32_t>(DataType::TYPE_DATETIME) ||
-                                idxHdr.keyType == static_cast<uint32_t>(DataType::TYPE_BOOLEAN))
-                                   ? 4u : col.length;
-                // keyBuf 存放纯 key 数据（无 record 偏移），直接写入 offset 0
-                std::vector<char> keyBuf(ksz, 0);
-                DataType t = static_cast<DataType>(col.type);
-                if (t == DataType::TYPE_INT || t == DataType::TYPE_DATETIME || t == DataType::TYPE_BOOLEAN) {
-                    uint32_t v = static_cast<uint32_t>(std::atoi(ast->where.value.c_str()));
-                    std::memcpy(keyBuf.data(), &v, sizeof(uint32_t));
-                } else if (t == DataType::TYPE_FLOAT) {
-                    float v = 0.0f; try { v = std::stof(ast->where.value); } catch(...) {}
-                    std::memcpy(keyBuf.data(), &v, sizeof(float));
-                } else if (t == DataType::TYPE_DOUBLE) {
-                    double v = 0.0; try { v = std::stod(ast->where.value); } catch(...) {}
-                    std::memcpy(keyBuf.data(), &v, sizeof(double));
-                } else {
-                    size_t len = ast->where.value.size();
-                    if (len > ksz) len = ksz;
-                    std::memcpy(keyBuf.data(), ast->where.value.c_str(), len);
-                    for (size_t z = len; z < ksz; ++z) keyBuf[z] = '\0';
+            uint32_t colCount = IndexManager::GetCompositeColumnCount(idxHdr);
+            if (colCount <= 1) continue;  // 单列索引用后面的逻辑
+
+            // 获取复合索引的列名列表
+            std::vector<std::string> idxColNames;
+            IndexManager::GetCompositeColumnNames(idxHdr, idxColNames);
+            uint32_t indices[4];
+            IndexManager::GetCompositeColumnIndices(idxHdr, indices);
+
+            // 检查 WHERE 条件是否覆盖了复合索引的左前缀
+            // 规则：前 k 列全部等值匹配 → 可做等值/范围查找
+            int matchedPrefix = 0;
+            bool allEquality = true;
+            for (int ci = 0; ci < static_cast<int>(colCount); ++ci) {
+                bool foundCol = false;
+                for (const auto& cond : ast->where.conditions) {
+                    if (cond.column == idxColNames[ci]) {
+                        if (cond.op == "=" || cond.op == "==") {
+                            matchedPrefix = ci + 1;
+                            foundCol = true;
+                            break;
+                        } else if (ci == static_cast<int>(colCount) - 1 &&
+                                   (cond.op == "<" || cond.op == ">" || cond.op == "<=" || cond.op == ">=")) {
+                            // 仅最后一列支持范围
+                            matchedPrefix = ci + 1;
+                            allEquality = false;
+                            foundCol = true;
+                            break;
+                        } else if (cond.op == "<" || cond.op == ">" || cond.op == "<=" || cond.op == ">=") {
+                            // 非末尾列做范围 → 不支持（忽略此索引）
+                            foundCol = true;
+                            matchedPrefix = 0;
+                            break;
+                        }
+                    }
                 }
-                IndexManager::Lookup(idxName, keyBuf.data(), ksz, matchedOffsets);
-                usedIndex = true;
-                std::cerr << "[DML] Index hit: " << idxName << " (" << matchedOffsets.size() << " rows)\n";
-                break;
+                if (!foundCol || matchedPrefix == 0) break;
             }
+
+            if (matchedPrefix == 0) continue;  // 前缀不匹配
+
+            // 构建复合搜索 key
+            uint32_t totalKS = IndexManager::GetCompositeKeySize(idxHdr, fields);
+            std::vector<char> keyBuf(totalKS, 0);
+            bool buildOk = true;
+            for (int ci = 0; ci < matchedPrefix; ++ci) {
+                // 找到匹配的条件值
+                std::string condVal;
+                std::string condOp;
+                for (const auto& cond : ast->where.conditions) {
+                    if (cond.column == idxColNames[ci]) {
+                        condVal = cond.value;
+                        condOp = cond.op;
+                        break;
+                    }
+                }
+                const ColumnDef& tgtCol = fields[indices[ci]];
+                uint32_t colKS = IndexManager::GetColumnKeySize(tgtCol);
+                uint32_t keyOff = 0;
+                for (int p = 0; p < ci; ++p)
+                    keyOff += IndexManager::GetColumnKeySize(fields[indices[p]]);
+
+                DataType ct = static_cast<DataType>(tgtCol.type);
+                if (ct == DataType::TYPE_INT || ct == DataType::TYPE_DATETIME || ct == DataType::TYPE_BOOLEAN) {
+                    uint32_t v = static_cast<uint32_t>(std::atoi(condVal.c_str()));
+                    std::memcpy(keyBuf.data() + keyOff, &v, colKS);
+                } else if (ct == DataType::TYPE_FLOAT) {
+                    float v = 0.0f; try { v = std::stof(condVal); } catch(...) {}
+                    std::memcpy(keyBuf.data() + keyOff, &v, colKS);
+                } else if (ct == DataType::TYPE_DOUBLE) {
+                    double v = 0.0; try { v = std::stod(condVal); } catch(...) {}
+                    std::memcpy(keyBuf.data() + keyOff, &v, colKS);
+                } else {
+                    size_t len = condVal.size();
+                    if (len > colKS) len = colKS;
+                    std::memcpy(keyBuf.data() + keyOff, condVal.c_str(), len);
+                }
+                // 验证 buildOk 不需要额外操作
+            }
+            (void)buildOk;
+
+            if (matchedPrefix == static_cast<int>(colCount) && allEquality) {
+                // 全列等值 → 精确查找
+                IndexManager::Lookup(idxName, keyBuf.data(), totalKS, matchedOffsets);
+                std::cerr << "[DML] Composite index eq hit: " << idxName
+                          << " (" << matchedOffsets.size() << " rows)\n";
+            } else {
+                // 前缀匹配（带或不带末列范围）→ 范围查找（>= 前缀key 且 < 前缀key+1）
+                // 简化：对于全等值前缀，用等值查找；部分前缀用全表扫描
+                // 此处退化为全表扫描，保留索引可用标记
+                continue;  // 前缀部分匹配暂不优化，让后面的单列索引逻辑处理
+            }
+            usedIndex = true;
+            break;
+        }
+
+        // ── 单列索引匹配（未命中复合索引时）──
+        if (!usedIndex) {
+        for (const auto& cond : ast->where.conditions) {
+            bool isEquality = (cond.op == "=" || cond.op == "==");
+            bool isRange = (cond.op == "<" || cond.op == ">" || cond.op == "<=" || cond.op == ">=");
+            if (!isEquality && !isRange) continue;
+            bool found = false;
+            for (const auto& idxName : indexes) {
+                IndexHeader idxHdr;
+                if (DictManager::GetIndexHeader(idxName, idxHdr) != ErrorCode::DB_OK) continue;
+                if (std::string(idxHdr.columnName) == cond.column) {
+                    const ColumnDef& col = fields[idxHdr.columnIndex];
+                    uint32_t ksz = (idxHdr.keyType == static_cast<uint32_t>(DataType::TYPE_INT) ||
+                                    idxHdr.keyType == static_cast<uint32_t>(DataType::TYPE_DATETIME) ||
+                                    idxHdr.keyType == static_cast<uint32_t>(DataType::TYPE_BOOLEAN))
+                                       ? 4u : col.length;
+                    std::vector<char> keyBuf(ksz, 0);
+                    DataType t = static_cast<DataType>(col.type);
+                    if (t == DataType::TYPE_INT || t == DataType::TYPE_DATETIME || t == DataType::TYPE_BOOLEAN) {
+                        uint32_t v = static_cast<uint32_t>(std::atoi(cond.value.c_str()));
+                        std::memcpy(keyBuf.data(), &v, sizeof(uint32_t));
+                    } else if (t == DataType::TYPE_FLOAT) {
+                        float v = 0.0f; try { v = std::stof(cond.value); } catch(...) {}
+                        std::memcpy(keyBuf.data(), &v, sizeof(float));
+                    } else if (t == DataType::TYPE_DOUBLE) {
+                        double v = 0.0; try { v = std::stod(cond.value); } catch(...) {}
+                        std::memcpy(keyBuf.data(), &v, sizeof(double));
+                    } else {
+                        size_t len = cond.value.size();
+                        if (len > ksz) len = ksz;
+                        std::memcpy(keyBuf.data(), cond.value.c_str(), len);
+                        for (size_t z = len; z < ksz; ++z) keyBuf[z] = '\0';
+                    }
+                    if (isEquality) {
+                        IndexManager::Lookup(idxName, keyBuf.data(), ksz, matchedOffsets);
+                        std::cerr << "[DML] Index eq hit: " << idxName << " (" << matchedOffsets.size() << " rows)\n";
+                    } else {
+                        IndexManager::LookupRange(idxName, keyBuf.data(), ksz, idxHdr.keyType, cond.op, matchedOffsets);
+                        std::cerr << "[DML] Index range hit: " << idxName << " " << cond.op << " (" << matchedOffsets.size() << " rows)\n";
+                    }
+                    usedIndex = true;
+                    found = true;
+                    break;
+                }
+            }
+            if (found) break; // 只用第一个可用索引
+        }
+    } // end if (!usedIndex)
+    } // end if (where.hasWhere && !conditions.empty())
+
+    // 检查是否有 OR：有 OR 时索引缩小范围不可靠，退化为全表扫描
+    if (usedIndex && ast->where.conditions.size() > 1) {
+        for (auto& op : ast->where.logicOps) {
+            if (op == LogicOp::OR) { usedIndex = false; matchedOffsets.clear(); break; }
         }
     }
 
@@ -336,6 +502,11 @@ ExecuteResult DMLExecutor::selectRecord(const ASTNode* ast) {
             char* rp = static_cast<char*>(pageData) + pageOff * header.recordSize;
             std::vector<std::string> row;
             for (const auto& f : fields) row.push_back(readFieldValue(rp, f));
+            // 索引只覆盖了第一个等值条件，剩余条件需要逐条验证
+            if (!evaluateCompoundWhere(row, ast->where, fields)) {
+                BufferPool::ReleasePage(fd, pid);
+                continue;
+            }
             res.rows.push_back(row);
             BufferPool::ReleasePage(fd, pid);
         }
@@ -365,17 +536,7 @@ ExecuteResult DMLExecutor::selectRecord(const ASTNode* ast) {
                     }
                 }
                 if (ast->where.hasWhere) {
-                    int colIndex = -1; DataType colType = DataType::TYPE_VARCHAR;
-                    for (size_t ci = 0; ci < fields.size(); ++ci) {
-                        if (fields[ci].fieldName == ast->where.column) { colIndex = static_cast<int>(ci); colType = fields[ci].type; break; }
-                    }
-                    if (colIndex >= 0 && colIndex < static_cast<int>(row.size())) {
-                        if (!evaluateWhere(row[colIndex], ast->where.op, ast->where.value, colType)) { recordsRead++; continue; }
-                    } else {
-                        res.rows.clear(); recordsRead = 0;
-                        res.msg = "Query OK: Empty set (unknown column '" + ast->where.column + "')";
-                        BufferPool::ReleasePage(fd, pid); FileManager::CloseFile(fd); return res;
-                    }
+                    if (!evaluateCompoundWhere(row, ast->where, fields)) { recordsRead++; continue; }
                 }
                 res.rows.push_back(row); recordsRead++;
             }
@@ -420,14 +581,9 @@ ExecuteResult DMLExecutor::updateRecord(const ASTNode* ast) {
         for (uint32_t ri = 0; ri < rpp && (pid * rpp + ri) < header.recordCount; ++ri) {
             char* rp = static_cast<char*>(pageData) + ri * header.recordSize;
             if (ast->where.hasWhere) {
-                int whereIdx = -1; DataType colType;
-                for (size_t ci = 0; ci < fields.size(); ++ci) {
-                    if (fields[ci].fieldName == ast->where.column) { whereIdx = static_cast<int>(ci); colType = fields[ci].type; break; }
-                }
-                if (whereIdx >= 0) {
-                    std::string fv = readFieldValue(rp, fields[whereIdx]);
-                    if (!evaluateWhere(fv, ast->where.op, ast->where.value, colType)) continue;
-                } else continue;
+                std::vector<std::string> row;
+                for (const auto& f : fields) row.push_back(readFieldValue(rp, f));
+                if (!evaluateCompoundWhere(row, ast->where, fields)) continue;
             }
             uint32_t recIdx = pid * rpp + ri;
             uint32_t recOffset = recIdx * header.recordSize;
@@ -489,14 +645,9 @@ ExecuteResult DMLExecutor::deleteRecord(const ASTNode* ast) {
         char* rp = static_cast<char*>(pg) + offset;
         bool matched = true;
         if (ast->where.hasWhere) {
-            int whereIdx = -1; DataType colType;
-            for (size_t ci = 0; ci < fields.size(); ++ci) {
-                if (fields[ci].fieldName == ast->where.column) { whereIdx = static_cast<int>(ci); colType = fields[ci].type; break; }
-            }
-            if (whereIdx >= 0) {
-                std::string fieldValue = readFieldValue(rp, fields[whereIdx]);
-                matched = evaluateWhere(fieldValue, ast->where.op, ast->where.value, colType);
-            } else matched = false;
+            std::vector<std::string> row;
+            for (const auto& f : fields) row.push_back(readFieldValue(rp, f));
+            matched = evaluateCompoundWhere(row, ast->where, fields);
         }
         if (matched) {
             toDelete.push_back(idx);

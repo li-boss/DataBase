@@ -1,5 +1,6 @@
 // src/storage/file_manager.cpp
 #include "../../include/storage/file_manager.h"
+#include "../../include/storage/bplus_tree.h"
 #include "../../include/common/db_types.h"
 #include <filesystem>
 #include <unordered_map>
@@ -127,7 +128,15 @@ bool FileManager::appendBlock(const std::string& filepath, const void* data, siz
 bool FileManager::createIndexFile(const std::string& idxPath, const IndexHeader& hdr) {
     std::ofstream ofs(idxPath, std::ios::binary);
     if (!ofs.is_open()) return false;
-    ofs.write(reinterpret_cast<const char*>(&hdr), sizeof(IndexHeader));
+
+    // 初始化 B+ Tree 元数据
+    IndexHeader hdrCopy = hdr;
+    hdrCopy.reserved[0] = 0;  // rootPageId = 0 (空树)
+    hdrCopy.reserved[1] = 1;  // nextPageId = 1 (首次 alloc 从 1 开始)
+    hdrCopy.reserved[2] = 0;  // keySize = 0 (由 BPlusTree 构造时回填)
+    hdrCopy.entryCount = 0;
+
+    ofs.write(reinterpret_cast<const char*>(&hdrCopy), sizeof(IndexHeader));
     return ofs.good();
 }
 
@@ -145,104 +154,33 @@ bool FileManager::appendIndexEntry(const std::string& idxPath,
                                      const void* keyData,
                                      uint32_t keySize,
                                      uint32_t recordOffset) {
-    std::ofstream ofs(idxPath, std::ios::binary | std::ios::app);
-    if (!ofs.is_open()) return false;
-    // 写入 keyData
-    ofs.write(reinterpret_cast<const char*>(keyData), keySize);
-    // 写入 recordOffset（小端）
-    ofs.write(reinterpret_cast<const char*>(&recordOffset), sizeof(uint32_t));
-    return ofs.good();
+    BPlusTree tree(idxPath, keySize);
+    return tree.insert(keyData, recordOffset);
 }
 
 bool FileManager::lookupIndexEntry(const std::string& idxPath,
                                     const void* keyData,
                                     uint32_t keySize,
                                     std::vector<uint32_t>& outOffsets) {
-    outOffsets.clear();
+    BPlusTree tree(idxPath, keySize);
+    return tree.search(keyData, outOffsets);
+}
 
-    // 1. 读取 IndexHeader
-    IndexHeader hdr;
-    if (!readIndexHeader(idxPath, hdr)) return false;
-
-    // 2. 打开文件，定位到第一条 IndexEntry（跳过 IndexHeader）
-    std::ifstream ifs(idxPath, std::ios::binary);
-    if (!ifs.is_open()) return false;
-    ifs.seekg(sizeof(IndexHeader));
-
-    // 3. 线性扫描所有条目
-    std::vector<char> buf(keySize);
-    uint32_t recOff = 0;
-    size_t entrySize = keySize + sizeof(uint32_t);
-
-    for (uint32_t i = 0; i < hdr.entryCount; ++i) {
-        // 读取 keyData
-        ifs.read(buf.data(), keySize);
-        // 读取 recordOffset
-        ifs.read(reinterpret_cast<char*>(&recOff), sizeof(uint32_t));
-
-        if (!ifs) break;  // 读取失败，停止
-
-        // 比较 keyData
-        if (std::memcmp(buf.data(), keyData, keySize) == 0) {
-            outOffsets.push_back(recOff);
-        }
-    }
-
-    return !outOffsets.empty();
+// ─── lookupIndexRange：范围查找（<, >, <=, >=）─────
+bool FileManager::lookupIndexRange(const std::string& idxPath,
+                                   const void* keyData,
+                                   uint32_t keySize,
+                                   uint32_t keyType,
+                                   const std::string& op,
+                                   std::vector<uint32_t>& outOffsets) {
+    BPlusTree tree(idxPath, keySize);
+    return tree.searchRange(keyData, keyType, op, outOffsets);
 }
 
 bool FileManager::removeIndexEntry(const std::string& idxPath,
                                     const void* keyData,
                                     uint32_t keySize,
                                     uint32_t recordOffset) {
-    IndexHeader hdr;
-    if (!readIndexHeader(idxPath, hdr)) return false;
-
-    std::string tmpPath = idxPath + ".tmp";
-    std::ofstream ofs(tmpPath, std::ios::binary);
-    if (!ofs.is_open()) return false;
-
-    IndexHeader newHdr = hdr;
-    newHdr.entryCount = 0;
-    ofs.write(reinterpret_cast<const char*>(&newHdr), sizeof(IndexHeader));
-
-    std::ifstream ifs(idxPath, std::ios::binary);
-    if (!ifs.is_open()) { std::error_code ec; fs::remove(tmpPath, ec); return false; }
-    ifs.seekg(sizeof(IndexHeader));
-
-    const size_t entrySize = keySize + sizeof(uint32_t);
-    std::vector<char> buf(entrySize);
-    uint32_t newCount = 0;
-
-    for (uint32_t i = 0; i < hdr.entryCount; ++i) {
-        ifs.read(buf.data(), entrySize);
-        if (!ifs) break;
-
-        // 读取当前条目的 recordOffset
-        uint32_t entryRecOff;
-        std::memcpy(&entryRecOff, buf.data() + keySize, sizeof(uint32_t));
-
-        // 仅跳过 key + recordOffset 同时匹配的条目
-        if (std::memcmp(buf.data(), keyData, keySize) == 0 && entryRecOff == recordOffset) {
-            // 删除此条目，不写入临时文件
-        } else {
-            ofs.write(buf.data(), entrySize);
-            ++newCount;
-        }
-    }
-    ifs.close();
-    ofs.close();
-
-    // 修正临时文件的 entryCount
-    newHdr.entryCount = newCount;
-    std::fstream tmpFs(tmpPath, std::ios::binary | std::ios::in | std::ios::out);
-    if (!tmpFs.is_open()) { std::error_code ec; fs::remove(tmpPath, ec); return false; }
-    tmpFs.write(reinterpret_cast<const char*>(&newHdr), sizeof(IndexHeader));
-    tmpFs.close();
-
-    // 替换原文件
-    std::error_code ec;
-    fs::remove(idxPath, ec);
-    fs::rename(tmpPath, idxPath, ec);
-    return !ec;
+    BPlusTree tree(idxPath, keySize);
+    return tree.remove(keyData, recordOffset);
 }

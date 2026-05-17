@@ -34,6 +34,7 @@ endif()
 # 3. 源码收集与核心库构建 (RuankoCore)
 set(STORAGE_SRC
     src/storage/file_manager.cpp
+    src/storage/bplus_tree.cpp
     src/storage/buffer_pool.cpp
     src/storage/dict_manager.cpp
     src/storage/index_manager.cpp

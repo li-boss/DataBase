@@ -130,6 +130,23 @@ public:
                                   uint32_t keyType);
 
     /**
+     * @brief 创建复合索引元数据（多列）
+     * @param indexName    索引名称
+     * @param tableName    所属表名
+     * @param columnNames  索引字段名列表（如 {"name","age","score"}）
+     * @param columnIndices 各字段在表中的序号（需与 fields 对应）
+     * @param keyTypes     各字段的类型（DataType 枚举值，用于计算 key 大小）
+     * @param fields       字段定义列表（用于计算 compositeKeySize）
+     * @return ErrorCode
+     */
+    static ErrorCode CreateIndex(const std::string& indexName,
+                                  const std::string& tableName,
+                                  const std::vector<std::string>& columnNames,
+                                  const std::vector<uint32_t>& columnIndices,
+                                  const std::vector<uint32_t>& keyTypes,
+                                  const std::vector<ColumnDef>& fields);
+
+    /**
      * @brief 删除索引：从 _index_meta.tdf 移除 + 删除 .idx 文件
      * @param indexName 索引名称
      * @return ErrorCode

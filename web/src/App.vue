@@ -68,6 +68,7 @@ const loading = reactive({
     schema: false,
     data: false,
     sql: false,
+    script: false,
     createDatabase: false,
     createTable: false,
 });
@@ -663,6 +664,65 @@ async function runSql() {
         loading.sql = false;
     }
 }
+
+async function runScriptFile(file) {
+    if (!file) return;
+
+    loading.script = true;
+    expandSqlPanel();
+
+    try {
+        const text = await file.text();
+        if (!text.trim()) {
+            message.error("脚本文件内容为空。");
+            return;
+        }
+
+        const payload = await api.runScript(text);
+
+        // 构建脚本执行结果展示
+        const scriptMsg = payload.msg || "";
+        const details = (payload.results || [])
+            .map((r) => {
+                const status = r.ok ? "✓" : "✗";
+                return `${status} [${r.index}/${payload.total}] ${r.sql} → ${r.ok ? (r.msg || "OK") : (r.error || "FAIL")}`;
+            })
+            .join("\n");
+
+        sqlResult.value = {
+            headers: ["序号", "状态", "SQL 语句", "结果"],
+            rows: (payload.results || []).map((r) => [
+                String(r.index),
+                r.ok ? "成功" : "失败",
+                r.sql || "",
+                r.ok ? (r.msg || "OK") : (r.error || "FAIL"),
+            ]),
+            message: `${scriptMsg}\n\n${details}`,
+            error: payload.failCount > 0 ? `${payload.failCount} 条失败` : "",
+        };
+
+        // 刷新可能被脚本修改的表
+        if (currentTable.value) {
+            await Promise.all([
+                loadSchema(currentTable.value, { silent: true }),
+                loadData(currentTable.value, { silent: true }),
+            ]);
+        }
+
+        message.success(
+            `脚本执行完成：${payload.okCount} 成功, ${payload.failCount} 失败`,
+        );
+    } catch (error) {
+        sqlResult.value = {
+            headers: [],
+            rows: [],
+            message: "",
+            error: getErrorMessage(error, "脚本执行失败。"),
+        };
+    } finally {
+        loading.script = false;
+    }
+}
 </script>
 
 <template>
@@ -807,18 +867,20 @@ async function runSql() {
                         </div>
 
                         <div class="sql-dock-host">
-                            <SqlConsolePane
-                                v-model:sqlText="sqlText"
-                                :current-table="currentTable"
-                                :loading="loading.sql"
-                                :result="sqlResult"
-                                :expanded="sqlPanelExpanded"
-                                :panel-height="sqlPanelHeight"
-                                @run="runSql"
-                                @fill-current="fillCurrentSql"
-                                @toggle="toggleSqlPanel"
-                                @resize-start="startSqlPanelResize"
-                            />
+                        <SqlConsolePane
+                            v-model:sqlText="sqlText"
+                            :current-table="currentTable"
+                            :loading="loading.sql"
+                            :script-loading="loading.script"
+                            :result="sqlResult"
+                            :expanded="sqlPanelExpanded"
+                            :panel-height="sqlPanelHeight"
+                            @run="runSql"
+                            @run-script="runScriptFile"
+                            @fill-current="fillCurrentSql"
+                            @toggle="toggleSqlPanel"
+                            @resize-start="startSqlPanelResize"
+                        />
                         </div>
                     </div>
                 </a-layout-content>

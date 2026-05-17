@@ -46,6 +46,23 @@ static std::string trimToken(const std::string& str) {
     return s;
 }
 
+// 辅助：读取一个 WHERE 条件 (col op val)
+static bool readSingleCondition(std::stringstream& ss, SingleCondition& cond, bool stripQuotes = true) {
+    std::string token;
+    if (!(ss >> token)) return false;
+    cond.column = trimToken(token);
+    if (!(ss >> token)) return false;
+    cond.op = trimToken(token);
+    if (!(ss >> token)) return false;
+    cond.value = trimToken(token);
+    if (stripQuotes) {
+        std::string& v = cond.value;
+        if ((v.front() == '\'' && v.back() == '\'') || (v.front() == '"' && v.back() == '"'))
+            v = v.substr(1, v.size() - 2);
+    }
+    return true;
+}
+
 // -----------------------------------------------------------------------------
 // 核心解析器：将原始 SQL 字符串映射为 ASTNode 对象
 // -----------------------------------------------------------------------------
@@ -110,13 +127,21 @@ std::unique_ptr<ASTNode> SqlParser::Parse(const std::string& sql) {
             ss >> token; // ON
             ss >> token;
             node->tbl = trimToken(token); // 表名
-            // 读取 (列名)
+            // 读取 (列名1, 列名2, ...)
             std::string remainder((std::istreambuf_iterator<char>(ss)), {});
             size_t start = remainder.find('(');
             size_t end = remainder.find(')');
             if (start != std::string::npos && end != std::string::npos && end > start) {
-                std::string colName = remainder.substr(start + 1, end - start - 1);
-                node->columns.push_back(trimToken(colName));
+                std::string colsStr = remainder.substr(start + 1, end - start - 1);
+                // 按逗号拆分多列
+                std::stringstream colStream(colsStr);
+                std::string oneCol;
+                while (std::getline(colStream, oneCol, ',')) {
+                    oneCol = trimToken(oneCol);
+                    if (!oneCol.empty()) {
+                        node->columns.push_back(oneCol);
+                    }
+                }
             }
         }
     } 
@@ -221,12 +246,28 @@ std::unique_ptr<ASTNode> SqlParser::Parse(const std::string& sql) {
             node->tbl = trimToken(token); // 提取表名
         }
 
-        // 处理可能存在的 WHERE 语句 
+        // 处理可能存在的 WHERE 子句（支持 AND / OR）
         if (ss >> token && toUpperCase(trimToken(token)) == "WHERE") {
             node->where.hasWhere = true;
-            ss >> token; node->where.column = trimToken(token); // 例: id
-            ss >> token; node->where.op = trimToken(token);     // 例: =
-            ss >> token; node->where.value = trimToken(token);  // 例: 5
+            SingleCondition cond;
+            if (readSingleCondition(ss, cond)) {
+                node->where.conditions.push_back(std::move(cond));
+            }
+            // 循环读取 AND/OR + 后续条件
+            while (ss >> token) {
+                std::string logicKw = toUpperCase(trimToken(token));
+                if (logicKw == "AND" || logicKw == "OR") {
+                    node->where.logicOps.push_back(logicKw == "AND" ? LogicOp::AND : LogicOp::OR);
+                    SingleCondition nextCond;
+                    if (readSingleCondition(ss, nextCond)) {
+                        node->where.conditions.push_back(std::move(nextCond));
+                    } else {
+                        break;
+                    }
+                } else {
+                    break; // 不是 AND/OR，可能是 ORDER BY/LIMIT 等后续关键字
+                }
+            }
         }
     }
     else if (keyword == "ALTER") {
@@ -320,16 +361,27 @@ std::unique_ptr<ASTNode> SqlParser::Parse(const std::string& sql) {
             }
             node->values.push_back(val);
 
-            // 可选 WHERE 子句（与 SELECT 相同逻辑）
+            // 可选 WHERE 子句（支持 AND / OR）
             if (ss >> token && toUpperCase(trimToken(token)) == "WHERE") {
                 node->where.hasWhere = true;
-                ss >> token; node->where.column = trimToken(token);
-                ss >> token; node->where.op = trimToken(token);
-                ss >> token; node->where.value = trimToken(token);
-                // 去引号
-                std::string& wv = node->where.value;
-                if ((wv.front() == '\'' && wv.back() == '\'') || (wv.front() == '"' && wv.back() == '"'))
-                    wv = wv.substr(1, wv.size() - 2);
+                SingleCondition cond;
+                if (readSingleCondition(ss, cond)) {
+                    node->where.conditions.push_back(std::move(cond));
+                }
+                while (ss >> token) {
+                    std::string logicKw = toUpperCase(trimToken(token));
+                    if (logicKw == "AND" || logicKw == "OR") {
+                        node->where.logicOps.push_back(logicKw == "AND" ? LogicOp::AND : LogicOp::OR);
+                        SingleCondition nextCond;
+                        if (readSingleCondition(ss, nextCond)) {
+                            node->where.conditions.push_back(std::move(nextCond));
+                        } else {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
             }
         }
     }
@@ -341,16 +393,27 @@ std::unique_ptr<ASTNode> SqlParser::Parse(const std::string& sql) {
             ss >> token;
             node->tbl = trimToken(token);
 
-            // 可选 WHERE 子句
+            // 可选 WHERE 子句（支持 AND / OR）
             if (ss >> token && toUpperCase(trimToken(token)) == "WHERE") {
                 node->where.hasWhere = true;
-                ss >> token; node->where.column = trimToken(token);
-                ss >> token; node->where.op = trimToken(token);
-                ss >> token; node->where.value = trimToken(token);
-                // 去引号
-                std::string& wv = node->where.value;
-                if ((wv.front() == '\'' && wv.back() == '\'') || (wv.front() == '"' && wv.back() == '"'))
-                    wv = wv.substr(1, wv.size() - 2);
+                SingleCondition cond;
+                if (readSingleCondition(ss, cond)) {
+                    node->where.conditions.push_back(std::move(cond));
+                }
+                while (ss >> token) {
+                    std::string logicKw = toUpperCase(trimToken(token));
+                    if (logicKw == "AND" || logicKw == "OR") {
+                        node->where.logicOps.push_back(logicKw == "AND" ? LogicOp::AND : LogicOp::OR);
+                        SingleCondition nextCond;
+                        if (readSingleCondition(ss, nextCond)) {
+                            node->where.conditions.push_back(std::move(nextCond));
+                        } else {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
             }
         }
     }
