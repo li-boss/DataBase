@@ -93,3 +93,8 @@ add_test(NAME Storage_DictMgr_Test COMMAND test_dict_manager)
 add_executable(test_record_rw tests/test_record_rw.cpp)
 target_link_libraries(test_record_rw PRIVATE RuankoCore)
 add_test(NAME Storage_RecordRW_Test COMMAND test_record_rw)
+
+# 第四阶段：脚本批量执行与全链路测试
+add_executable(test_script tests/test_script.cpp)
+target_link_libraries(test_script PRIVATE RuankoCore)
+add_test(NAME Engine_Script_Test COMMAND test_script)

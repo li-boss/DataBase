@@ -280,8 +280,38 @@ ExecuteResult DMLExecutor::selectRecord(const ASTNode* ast) {
         res.error = 1; res.msg = "Error: " + std::string(getErrorMessage(err)); return res;
     }
 
-    for (const auto& f : fields) {
-        res.headers.push_back(f.fieldName);
+    bool projectAll = false;
+    if (ast->columns.empty() || (ast->columns.size() == 1 && ast->columns[0] == "*")) {
+        projectAll = true;
+    }
+
+    std::vector<size_t> projectedIndices;
+    if (projectAll) {
+        for (size_t i = 0; i < fields.size(); ++i) {
+            res.headers.push_back(fields[i].fieldName);
+            projectedIndices.push_back(i);
+        }
+    } else {
+        for (const auto& colName : ast->columns) {
+            std::string upperCol = colName;
+            for (auto& c : upperCol) c = std::toupper(c);
+            bool found = false;
+            for (size_t i = 0; i < fields.size(); ++i) {
+                std::string fieldNameStr = fields[i].fieldName;
+                for (auto& c : fieldNameStr) c = std::toupper(c);
+                if (upperCol == fieldNameStr) {
+                    res.headers.push_back(fields[i].fieldName);
+                    projectedIndices.push_back(i);
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                res.error = 1;
+                res.msg = "Error: Column '" + colName + "' not found.";
+                return res;
+            }
+        }
     }
 
     int fd;
@@ -313,7 +343,6 @@ ExecuteResult DMLExecutor::selectRecord(const ASTNode* ast) {
                     case DataType::TYPE_FLOAT: {
                         float val;
                         std::memcpy(&val, recordPtr + f.offset, 4);
-                        // 避免不必要的 .0
                         if (val == static_cast<int>(val)) {
                             row.push_back(std::to_string(static_cast<int>(val)) + ".0");
                         } else {
@@ -338,7 +367,7 @@ ExecuteResult DMLExecutor::selectRecord(const ASTNode* ast) {
                     case DataType::TYPE_BOOLEAN:
                         row.push_back(boolToString(*(recordPtr + f.offset)));
                         break;
-                    default: { // VARCHAR, CHAR, TEXT, DATETIME → 字符串
+                    default: { // VARCHAR, CHAR, TEXT, DATETIME
                         size_t bufLen = f.length > 512 ? 511 : f.length;
                         char* buf = new char[bufLen + 1]();
                         std::strncpy(buf, recordPtr + f.offset, bufLen);
@@ -352,9 +381,13 @@ ExecuteResult DMLExecutor::selectRecord(const ASTNode* ast) {
             // ── WHERE 过滤 ──
             if (ast->where.hasWhere) {
                 int colIndex = -1;
-                DataType colType = DataType::TYPE_VARCHAR; // 默认字符串类型
+                DataType colType = DataType::TYPE_VARCHAR;
+                std::string upperWhereCol = ast->where.column;
+                for (auto& c : upperWhereCol) c = std::toupper(c);
                 for (size_t ci = 0; ci < fields.size(); ++ci) {
-                    if (fields[ci].fieldName == ast->where.column) {
+                    std::string fieldNameStr = fields[ci].fieldName;
+                    for (auto& c : fieldNameStr) c = std::toupper(c);
+                    if (fieldNameStr == upperWhereCol) {
                         colIndex = static_cast<int>(ci);
                         colType = fields[ci].type;
                         break;
@@ -363,9 +396,8 @@ ExecuteResult DMLExecutor::selectRecord(const ASTNode* ast) {
 
                 if (colIndex >= 0 && colIndex < static_cast<int>(row.size())) {
                     bool matched = evaluateWhere(row[colIndex], ast->where.op, ast->where.value, colType);
-                    if (!matched) { recordsRead++; continue; } // 不满足条件，跳过此行
+                    if (!matched) { recordsRead++; continue; }
                 } else {
-                    // WHERE 列名不存在于表中 → 空结果（与 MySQL 行为一致）
                     res.rows.clear(); recordsRead = 0;
                     res.msg = "Query OK: Empty set (unknown column '" + ast->where.column + "')";
                     BufferPool::ReleasePage(fd, pid);
@@ -374,7 +406,12 @@ ExecuteResult DMLExecutor::selectRecord(const ASTNode* ast) {
                 }
             }
 
-            res.rows.push_back(row);
+            // ── 投影处理 ──
+            std::vector<std::string> projectedRow;
+            for (size_t idx : projectedIndices) {
+                projectedRow.push_back(row[idx]);
+            }
+            res.rows.push_back(projectedRow);
             recordsRead++;
         }
         BufferPool::ReleasePage(fd, pid);
@@ -398,8 +435,12 @@ ExecuteResult DMLExecutor::updateRecord(const ASTNode* ast) {
 
     // 找到 SET 目标列的索引
     int setColIndex = -1;
+    std::string upperCol = ast->columns[0];
+    for (auto& c : upperCol) c = std::toupper(c);
     for (size_t i = 0; i < fields.size(); ++i) {
-        if (fields[i].fieldName == ast->columns[0]) { setColIndex = static_cast<int>(i); break; }
+        std::string fieldNameStr = fields[i].fieldName;
+        for (auto& c : fieldNameStr) c = std::toupper(c);
+        if (fieldNameStr == upperCol) { setColIndex = static_cast<int>(i); break; }
     }
     if (setColIndex < 0) { res.error = 1; res.msg = "Error: Unknown column '" + ast->columns[0] + "'."; return res; }
     DataType setColType = fields[setColIndex].type;
@@ -415,11 +456,6 @@ ExecuteResult DMLExecutor::updateRecord(const ASTNode* ast) {
     uint32_t totalPages = (header.recordCount + rpp - 1) / rpp;
     uint32_t rowsChanged = 0;
 
-    std::cerr << "[UPDATE-DEBUG] tbl=" << ast->tbl << " setCol=" << ast->columns[0]
-              << " val='" << ast->values[0] << "' setType=" << (int)setColType
-              << " where=" << (ast->where.hasWhere ? ast->where.column + " " + ast->where.op + " " + ast->where.value : "NONE")
-              << " recordCount=" << header.recordCount << " rpp=" << rpp << " pages=" << totalPages << std::endl;
-
     for (uint32_t pid = 0; pid < totalPages; ++pid) {
         void* pageData = BufferPool::GetPage(fd, pid);
         if (!pageData) continue;
@@ -431,19 +467,18 @@ ExecuteResult DMLExecutor::updateRecord(const ASTNode* ast) {
             if (ast->where.hasWhere) {
                 int whereIdx = -1;
                 DataType colType;
+                std::string upperWhereCol = ast->where.column;
+                for (auto& c : upperWhereCol) c = std::toupper(c);
                 for (size_t ci = 0; ci < fields.size(); ++ci) {
-                    if (fields[ci].fieldName == ast->where.column) {
+                    std::string fieldNameStr = fields[ci].fieldName;
+                    for (auto& c : fieldNameStr) c = std::toupper(c);
+                    if (fieldNameStr == upperWhereCol) {
                         whereIdx = static_cast<int>(ci); colType = fields[ci].type; break;
                     }
                 }
                 if (whereIdx >= 0) {
                     std::string fieldValue = readFieldValue(rp, fields[whereIdx]);
                     bool match = evaluateWhere(fieldValue, ast->where.op, ast->where.value, colType);
-                    std::cerr << "[UPDATE-DEBUG] row" << (pid * rpp + ri)
-                              << " WHERE " << fields[whereIdx].fieldName
-                              << "='" << fieldValue << "' " << ast->where.op << " '"
-                              << ast->where.value << "' type=" << (int)colType
-                              << " → match=" << (match ? "YES":"NO") << std::endl;
                     if (!match)
                         continue; // 不匹配，跳过
                 } else continue;
@@ -453,13 +488,11 @@ ExecuteResult DMLExecutor::updateRecord(const ASTNode* ast) {
             switch (setColType) {
                 case DataType::TYPE_INT: {
                     int32_t val = 0; try { val = std::stoi(ast->values[0]); } catch(...) {}
-                    std::cerr << "[UPDATE-DEBUG] WRITING INT val=" << val << " at offset=" << fields[setColIndex].offset << std::endl;
                     std::memcpy(rp + fields[setColIndex].offset, &val, 4);
                     break;
                 }
                 case DataType::TYPE_FLOAT: {
                     float val = 0.0f; try { val = std::stof(ast->values[0]); } catch(...) {}
-                    std::cerr << "[UPDATE-DEBUG] WRITING FLOAT val='" << ast->values[0] << "' → " << val << " at offset=" << fields[setColIndex].offset << std::endl;
                     std::memcpy(rp + fields[setColIndex].offset, &val, 4);
                     break;
                 }
@@ -532,11 +565,15 @@ ExecuteResult DMLExecutor::deleteRecord(const ASTNode* ast) {
         if (ast->where.hasWhere) {
             int whereIdx = -1;
             DataType colType;
-            for (size_t ci = 0; ci < fields.size(); ++ci) {
-                if (fields[ci].fieldName == ast->where.column) {
-                    whereIdx = static_cast<int>(ci); colType = fields[ci].type; break;
+                std::string upperWhereCol = ast->where.column;
+                for (auto& c : upperWhereCol) c = std::toupper(c);
+                for (size_t ci = 0; ci < fields.size(); ++ci) {
+                    std::string fieldNameStr = fields[ci].fieldName;
+                    for (auto& c : fieldNameStr) c = std::toupper(c);
+                    if (fieldNameStr == upperWhereCol) {
+                        whereIdx = static_cast<int>(ci); colType = fields[ci].type; break;
+                    }
                 }
-            }
             if (whereIdx >= 0) {
                 std::string fieldValue = readFieldValue(rp, fields[whereIdx]);
                 matched = evaluateWhere(fieldValue, ast->where.op, ast->where.value, colType);
@@ -580,5 +617,23 @@ ExecuteResult DMLExecutor::deleteRecord(const ASTNode* ast) {
     FileManager::CloseFile(fd);
     res.msg = "Query OK: " + std::to_string(toDelete.size()) + " row(s) deleted";
 #endif
+    return res;
+}
+
+ExecuteResult DMLExecutor::executeBegin(const ASTNode* ast) {
+    ExecuteResult res;
+    res.msg = "Query OK: Transaction started (Stub).";
+    return res;
+}
+
+ExecuteResult DMLExecutor::executeCommit(const ASTNode* ast) {
+    ExecuteResult res;
+    res.msg = "Query OK: Transaction committed (Stub).";
+    return res;
+}
+
+ExecuteResult DMLExecutor::executeRollback(const ASTNode* ast) {
+    ExecuteResult res;
+    res.msg = "Query OK: Transaction rolled back (Stub).";
     return res;
 }

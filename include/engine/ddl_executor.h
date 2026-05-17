@@ -16,6 +16,12 @@ public:
     static ExecuteResult executeDropTable(const ASTNode* ast);
     static ExecuteResult executeAlterTable(const ASTNode* ast);  // ALTER TABLE ADD/DROP/MODIFY
     
+    // 新增：索引相关接口
+    static ExecuteResult executeCreateIndex(const ASTNode* ast);
+    static ExecuteResult executeDropIndex(const ASTNode* ast);
+    static ExecuteResult executeShowIndexes(const ASTNode* ast);
+    static ExecuteResult executeCreateView(const ASTNode* ast);
+    
     // 依据任务清单新增的库级别接口
     static ExecuteResult createDatabase(const ASTNode* ast);
     static ExecuteResult dropDatabase(const ASTNode* ast);

@@ -454,6 +454,45 @@ void HttpServer::Start(int port) {
         res.set_content(j.dump(), "application/json");
     });
 
+    // 10. 批量脚本执行入口
+    svr.Post("/api/execute_script", [](const httplib::Request& req, httplib::Response& res) {
+        json j;
+        try {
+            auto body = json::parse(req.body);
+            std::string scriptPath = body.value("path", "");
+            
+            if (scriptPath.empty()) {
+                j["ok"] = false;
+                j["error"] = "Script path cannot be empty.";
+                res.set_content(j.dump(), "application/json");
+                return;
+            }
+
+            auto results = RecordManager::ExecuteScript(scriptPath);
+            
+            j["ok"] = true;
+            json resultsArr = json::array();
+            for (const auto& r : results) {
+                json item;
+                if (r.error != 0) {
+                    item["ok"] = false;
+                    item["error"] = r.msg;
+                } else {
+                    item["ok"] = true;
+                    item["msg"] = r.msg;
+                    item["headers"] = r.headers;
+                    item["rows"] = r.rows;
+                }
+                resultsArr.push_back(item);
+            }
+            j["results"] = resultsArr;
+        } catch (const std::exception& e) {
+            j["ok"] = false;
+            j["error"] = std::string("JSON parse error or execution error: ") + e.what();
+        }
+        res.set_content(j.dump(), "application/json");
+    });
+
     std::cout << "[RuankoDB HttpServer] Listening on http://0.0.0.0:" << port << "..." << std::endl;
     svr.listen("0.0.0.0", port);
     g_server = nullptr;  // listen 返回后清除指针
