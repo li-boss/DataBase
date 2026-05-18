@@ -19,4 +19,9 @@ public:
     static ExecuteResult selectRecord(const ASTNode* ast);
     static ExecuteResult updateRecord(const ASTNode* ast);
     static ExecuteResult deleteRecord(const ASTNode* ast);
+    
+    // 新增：事务控制接口
+    static ExecuteResult executeBegin(const ASTNode* ast);
+    static ExecuteResult executeCommit(const ASTNode* ast);
+    static ExecuteResult executeRollback(const ASTNode* ast);
 };

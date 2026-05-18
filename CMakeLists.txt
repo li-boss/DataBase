@@ -102,3 +102,7 @@ add_test(NAME Storage_RecordRW_Test COMMAND test_record_rw)
 add_executable(test_dml_index tests/test_dml_index.cpp)
 target_link_libraries(test_dml_index PRIVATE RuankoCore)
 add_test(NAME DML_Index_Integration_Test COMMAND test_dml_index)
+# 第四阶段：脚本批量执行与全链路测试
+add_executable(test_script tests/test_script.cpp)
+target_link_libraries(test_script PRIVATE RuankoCore)
+add_test(NAME Engine_Script_Test COMMAND test_script)

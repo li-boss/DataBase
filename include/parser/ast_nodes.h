@@ -21,6 +21,13 @@ enum class StmtType {
     SELECT,
     UPDATE,
     DELETE,
+    CREATE_INDEX,
+    DROP_INDEX,
+    SHOW_INDEXES,
+    BEGIN_TRANS,
+    COMMIT_TRANS,
+    ROLLBACK_TRANS,
+    CREATE_VIEW,
     UNKNOWN
 };
 

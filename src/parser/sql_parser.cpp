@@ -120,28 +120,45 @@ std::unique_ptr<ASTNode> SqlParser::Parse(const std::string& sql) {
             node->db = trimToken(token);
         }
         else if (subKeyword == "INDEX") {
-            // 解析 CREATE INDEX <索引名> ON <表名>(<列名>)
+            // 解析 CREATE INDEX <索引名> ON <表名> (<列名>)
             node->type = StmtType::CREATE_INDEX;
             ss >> token;
-            node->db = trimToken(token); // 索引名（复用 db 字段）
-            ss >> token; // ON
+            node->columns.push_back(trimToken(token)); // 索引名
+            
             ss >> token;
-            node->tbl = trimToken(token); // 表名
-            // 读取 (列名1, 列名2, ...)
-            std::string remainder((std::istreambuf_iterator<char>(ss)), {});
-            size_t start = remainder.find('(');
-            size_t end = remainder.find(')');
-            if (start != std::string::npos && end != std::string::npos && end > start) {
-                std::string colsStr = remainder.substr(start + 1, end - start - 1);
-                // 按逗号拆分多列
-                std::stringstream colStream(colsStr);
-                std::string oneCol;
-                while (std::getline(colStream, oneCol, ',')) {
-                    oneCol = trimToken(oneCol);
-                    if (!oneCol.empty()) {
-                        node->columns.push_back(oneCol);
-                    }
+            if (toUpperCase(trimToken(token)) == "ON") {
+                ss >> token;
+                std::string tblAndCol = trimToken(token);
+                size_t paren = tblAndCol.find('(');
+                if (paren != std::string::npos) {
+                    node->tbl = tblAndCol.substr(0, paren);
+                    std::string col = tblAndCol.substr(paren + 1);
+                    if (col.back() == ')') col = col.substr(0, col.size() - 1);
+                    node->columns.push_back(col); // 列名
+                } else {
+                    node->tbl = tblAndCol;
+                    ss >> token;
+                    std::string col = trimToken(token);
+                    if (col.front() == '(') col = col.substr(1);
+                    if (col.back() == ')') col = col.substr(0, col.size() - 1);
+                    node->columns.push_back(col); // 列名
                 }
+            }
+        }
+        else if (subKeyword == "VIEW") {
+            // 解析 CREATE VIEW <视图名> AS <SELECT 语句>
+            node->type = StmtType::CREATE_VIEW;
+            ss >> token;
+            node->columns.push_back(trimToken(token)); // 视图名
+            
+            ss >> token;
+            if (toUpperCase(trimToken(token)) == "AS") {
+                // 读取剩余的所有内容作为 SELECT 语句
+                std::string selectStr((std::istreambuf_iterator<char>(ss)), {});
+                // 去除首尾空白
+                selectStr.erase(0, selectStr.find_first_not_of(" \t\n\r"));
+                selectStr.erase(selectStr.find_last_not_of(" \t\n\r") + 1);
+                node->values.push_back(selectStr); // 存入 values[0]
             }
         }
     } 
@@ -162,10 +179,16 @@ std::unique_ptr<ASTNode> SqlParser::Parse(const std::string& sql) {
             node->db = trimToken(token);
         }
         else if (subKeyword == "INDEX") {
-            // 解析 DROP INDEX <索引名>
+            // 解析 DROP INDEX <索引名> ON <表名>
             node->type = StmtType::DROP_INDEX;
             ss >> token;
-            node->db = trimToken(token); // 索引名（复用 db 字段）
+            node->columns.push_back(trimToken(token)); // 索引名
+            
+            ss >> token;
+            if (toUpperCase(trimToken(token)) == "ON") {
+                ss >> token;
+                node->tbl = trimToken(token); // 表名
+            }
         }
     }
     else if (keyword == "USE") {
@@ -177,9 +200,17 @@ std::unique_ptr<ASTNode> SqlParser::Parse(const std::string& sql) {
     else if (keyword == "SHOW") {
         // 解析 SHOW TABLES / SHOW INDEXES <表名>
         ss >> token;
-        std::string showSub = toUpperCase(trimToken(token));
-        if (showSub == "TABLES") {
+        std::string sub = toUpperCase(trimToken(token));
+        if (sub == "TABLES") {
             node->type = StmtType::SHOW_TABLES;
+        } else if (sub == "INDEXES") {
+            // 解析 SHOW INDEXES FROM <表名>
+            node->type = StmtType::SHOW_INDEXES;
+            ss >> token; // 预期 FROM
+            if (toUpperCase(trimToken(token)) == "FROM") {
+                ss >> token;
+                node->tbl = trimToken(token);
+            }
         }
         else if (showSub == "INDEXES" || showSub == "INDEX") {
             node->type = StmtType::SHOW_INDEXES;
@@ -235,18 +266,40 @@ std::unique_ptr<ASTNode> SqlParser::Parse(const std::string& sql) {
         }
     }
     else if (keyword == "SELECT") {
-        // 解析 SELECT * FROM <表名> WHERE <条件>
+        // 解析 SELECT col1, col2 FROM <表名> WHERE <条件>
         node->type = StmtType::SELECT;
-        ss >> token; // 读取列（如 * 或 id）
-        node->columns.push_back(trimToken(token)); 
         
-        ss >> token; // 预期的 FROM
-        if (toUpperCase(trimToken(token)) == "FROM") {
-            ss >> token;
-            node->tbl = trimToken(token); // 提取表名
+        std::string columnsStr = "";
+        bool foundFrom = false;
+        while (ss >> token) {
+            std::string upperToken = toUpperCase(trimToken(token));
+            if (upperToken == "FROM") {
+                foundFrom = true;
+                break;
+            }
+            columnsStr += token + " ";
+        }
+        
+        if (!foundFrom) {
+            node->type = StmtType::UNKNOWN;
+            return node;
         }
 
-        // 处理可能存在的 WHERE 子句（支持 AND / OR）
+        // 按逗号切分列名
+        std::stringstream colStream(columnsStr);
+        std::string col;
+        while (std::getline(colStream, col, ',')) {
+            std::string trimmedCol = trimToken(col);
+            if (!trimmedCol.empty()) {
+                node->columns.push_back(trimmedCol);
+            }
+        }
+        
+        // 提取表名
+        ss >> token;
+        node->tbl = trimToken(token);
+
+        // 处理可能存在的 WHERE 语句 
         if (ss >> token && toUpperCase(trimToken(token)) == "WHERE") {
             node->where.hasWhere = true;
             SingleCondition cond;

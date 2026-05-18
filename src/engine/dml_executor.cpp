@@ -321,10 +321,38 @@ ExecuteResult DMLExecutor::selectRecord(const ASTNode* ast) {
         res.error = 1; res.msg = "Error: " + std::string(getErrorMessage(err)); return res;
     }
 
-    // ── 列投影（SELECT 指定列 or SELECT *）──
     bool projectAll = false;
     if (ast->columns.empty() || (ast->columns.size() == 1 && ast->columns[0] == "*")) {
         projectAll = true;
+    }
+
+    std::vector<size_t> projectedIndices;
+    if (projectAll) {
+        for (size_t i = 0; i < fields.size(); ++i) {
+            res.headers.push_back(fields[i].fieldName);
+            projectedIndices.push_back(i);
+        }
+    } else {
+        for (const auto& colName : ast->columns) {
+            std::string upperCol = colName;
+            for (auto& c : upperCol) c = std::toupper(c);
+            bool found = false;
+            for (size_t i = 0; i < fields.size(); ++i) {
+                std::string fieldNameStr = fields[i].fieldName;
+                for (auto& c : fieldNameStr) c = std::toupper(c);
+                if (upperCol == fieldNameStr) {
+                    res.headers.push_back(fields[i].fieldName);
+                    projectedIndices.push_back(i);
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                res.error = 1;
+                res.msg = "Error: Column '" + colName + "' not found.";
+                return res;
+            }
+        }
     }
 
     std::vector<size_t> projectedIndices;
@@ -401,6 +429,61 @@ ExecuteResult DMLExecutor::selectRecord(const ASTNode* ast) {
                             matchedPrefix = 0;
                             break;
                         }
+    uint32_t recordsPerPage = 4080 / header.recordSize;
+    if (recordsPerPage == 0) recordsPerPage = 1;
+    uint32_t totalPages = (header.recordCount + recordsPerPage - 1) / recordsPerPage;
+
+    uint32_t recordsRead = 0;
+    for (uint32_t pid = 0; pid < totalPages; ++pid) {
+        void* pageData = BufferPool::GetPage(fd, pid);
+        if (!pageData) continue;
+
+        for (uint32_t i = 0; i < recordsPerPage && recordsRead < header.recordCount; ++i) {
+            char* recordPtr = static_cast<char*>(pageData) + i * header.recordSize;
+            std::vector<std::string> row;
+            
+            for (const auto& f : fields) {
+                switch (f.type) {
+                    case DataType::TYPE_INT: {
+                        int32_t val;
+                        std::memcpy(&val, recordPtr + f.offset, 4);
+                        row.push_back(std::to_string(val));
+                        break;
+                    }
+                    case DataType::TYPE_FLOAT: {
+                        float val;
+                        std::memcpy(&val, recordPtr + f.offset, 4);
+                        if (val == static_cast<int>(val)) {
+                            row.push_back(std::to_string(static_cast<int>(val)) + ".0");
+                        } else {
+                            std::ostringstream oss;
+                            oss << val;
+                            row.push_back(oss.str());
+                        }
+                        break;
+                    }
+                    case DataType::TYPE_DOUBLE: {
+                        double val;
+                        std::memcpy(&val, recordPtr + f.offset, 8);
+                        if (val == static_cast<int64_t>(val)) {
+                            row.push_back(std::to_string(static_cast<int64_t>(val)) + ".0");
+                        } else {
+                            std::ostringstream oss;
+                            oss << val;
+                            row.push_back(oss.str());
+                        }
+                        break;
+                    }
+                    case DataType::TYPE_BOOLEAN:
+                        row.push_back(boolToString(*(recordPtr + f.offset)));
+                        break;
+                    default: { // VARCHAR, CHAR, TEXT, DATETIME
+                        size_t bufLen = f.length > 512 ? 511 : f.length;
+                        char* buf = new char[bufLen + 1]();
+                        std::strncpy(buf, recordPtr + f.offset, bufLen);
+                        row.push_back(std::string(buf));
+                        delete[] buf;
+                        break;
                     }
                 }
                 if (!foundCol || matchedPrefix == 0) break;
@@ -443,6 +526,31 @@ ExecuteResult DMLExecutor::selectRecord(const ASTNode* ast) {
                     size_t len = condVal.size();
                     if (len > colKS) len = colKS;
                     std::memcpy(keyBuf.data() + keyOff, condVal.c_str(), len);
+            // ── WHERE 过滤 ──
+            if (ast->where.hasWhere) {
+                int colIndex = -1;
+                DataType colType = DataType::TYPE_VARCHAR;
+                std::string upperWhereCol = ast->where.column;
+                for (auto& c : upperWhereCol) c = std::toupper(c);
+                for (size_t ci = 0; ci < fields.size(); ++ci) {
+                    std::string fieldNameStr = fields[ci].fieldName;
+                    for (auto& c : fieldNameStr) c = std::toupper(c);
+                    if (fieldNameStr == upperWhereCol) {
+                        colIndex = static_cast<int>(ci);
+                        colType = fields[ci].type;
+                        break;
+                    }
+                }
+
+                if (colIndex >= 0 && colIndex < static_cast<int>(row.size())) {
+                    bool matched = evaluateWhere(row[colIndex], ast->where.op, ast->where.value, colType);
+                    if (!matched) { recordsRead++; continue; }
+                } else {
+                    res.rows.clear(); recordsRead = 0;
+                    res.msg = "Query OK: Empty set (unknown column '" + ast->where.column + "')";
+                    BufferPool::ReleasePage(fd, pid);
+                    FileManager::CloseFile(fd);
+                    return res;
                 }
                 // 验证 buildOk 不需要额外操作
             }
@@ -517,6 +625,13 @@ ExecuteResult DMLExecutor::selectRecord(const ASTNode* ast) {
     if (usedIndex && ast->where.conditions.size() > 1) {
         for (auto& op : ast->where.logicOps) {
             if (op == LogicOp::OR) { usedIndex = false; matchedOffsets.clear(); break; }
+            // ── 投影处理 ──
+            std::vector<std::string> projectedRow;
+            for (size_t idx : projectedIndices) {
+                projectedRow.push_back(row[idx]);
+            }
+            res.rows.push_back(projectedRow);
+            recordsRead++;
         }
     }
 
@@ -600,8 +715,12 @@ ExecuteResult DMLExecutor::updateRecord(const ASTNode* ast) {
     if (err != ErrorCode::DB_OK) { res.error = 1; res.msg = "Error: Table not found."; return res; }
 
     int setColIndex = -1;
+    std::string upperCol = ast->columns[0];
+    for (auto& c : upperCol) c = std::toupper(c);
     for (size_t i = 0; i < fields.size(); ++i) {
-        if (fields[i].fieldName == ast->columns[0]) { setColIndex = static_cast<int>(i); break; }
+        std::string fieldNameStr = fields[i].fieldName;
+        for (auto& c : fieldNameStr) c = std::toupper(c);
+        if (fieldNameStr == upperCol) { setColIndex = static_cast<int>(i); break; }
     }
     if (setColIndex < 0) { res.error = 1; res.msg = "Error: Unknown column '" + ast->columns[0] + "'."; return res; }
     DataType setColType = fields[setColIndex].type;
@@ -623,6 +742,23 @@ ExecuteResult DMLExecutor::updateRecord(const ASTNode* ast) {
                 std::vector<std::string> row;
                 for (const auto& f : fields) row.push_back(readFieldValue(rp, f));
                 if (!evaluateCompoundWhere(row, ast->where, fields)) continue;
+                int whereIdx = -1;
+                DataType colType;
+                std::string upperWhereCol = ast->where.column;
+                for (auto& c : upperWhereCol) c = std::toupper(c);
+                for (size_t ci = 0; ci < fields.size(); ++ci) {
+                    std::string fieldNameStr = fields[ci].fieldName;
+                    for (auto& c : fieldNameStr) c = std::toupper(c);
+                    if (fieldNameStr == upperWhereCol) {
+                        whereIdx = static_cast<int>(ci); colType = fields[ci].type; break;
+                    }
+                }
+                if (whereIdx >= 0) {
+                    std::string fieldValue = readFieldValue(rp, fields[whereIdx]);
+                    bool match = evaluateWhere(fieldValue, ast->where.op, ast->where.value, colType);
+                    if (!match)
+                        continue; // 不匹配，跳过
+                } else continue;
             }
             uint32_t recIdx = pid * rpp + ri;
             uint32_t recOffset = recIdx * header.recordSize;
@@ -695,6 +831,21 @@ ExecuteResult DMLExecutor::deleteRecord(const ASTNode* ast) {
             if (idxErr != ErrorCode::DB_OK) {
                 std::cerr << "[DML] Warning: Index delete failed: " << getErrorMessage(idxErr) << "\n";
             }
+            int whereIdx = -1;
+            DataType colType;
+                std::string upperWhereCol = ast->where.column;
+                for (auto& c : upperWhereCol) c = std::toupper(c);
+                for (size_t ci = 0; ci < fields.size(); ++ci) {
+                    std::string fieldNameStr = fields[ci].fieldName;
+                    for (auto& c : fieldNameStr) c = std::toupper(c);
+                    if (fieldNameStr == upperWhereCol) {
+                        whereIdx = static_cast<int>(ci); colType = fields[ci].type; break;
+                    }
+                }
+            if (whereIdx >= 0) {
+                std::string fieldValue = readFieldValue(rp, fields[whereIdx]);
+                matched = evaluateWhere(fieldValue, ast->where.op, ast->where.value, colType);
+            } else matched = false;
         }
         BufferPool::ReleasePage(fd, pid);
     }
@@ -728,5 +879,23 @@ ExecuteResult DMLExecutor::deleteRecord(const ASTNode* ast) {
     }
     res.msg = "Query OK: " + std::to_string(toDelete.size()) + " row(s) deleted";
 #endif
+    return res;
+}
+
+ExecuteResult DMLExecutor::executeBegin(const ASTNode* ast) {
+    ExecuteResult res;
+    res.msg = "Query OK: Transaction started (Stub).";
+    return res;
+}
+
+ExecuteResult DMLExecutor::executeCommit(const ASTNode* ast) {
+    ExecuteResult res;
+    res.msg = "Query OK: Transaction committed (Stub).";
+    return res;
+}
+
+ExecuteResult DMLExecutor::executeRollback(const ASTNode* ast) {
+    ExecuteResult res;
+    res.msg = "Query OK: Transaction rolled back (Stub).";
     return res;
 }

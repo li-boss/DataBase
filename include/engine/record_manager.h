@@ -8,4 +8,7 @@ class RecordManager {
 public:
     // 连接 Parser 解析语法树和底层具体执行器的交通枢纽
     static ExecuteResult Execute(const ASTNode* ast);
+
+    // 新增：批量执行 SQL 脚本文件
+    static std::vector<ExecuteResult> ExecuteScript(const std::string& scriptPath);
 };

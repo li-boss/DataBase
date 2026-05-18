@@ -529,3 +529,29 @@ ExecuteResult DDLExecutor::executeAlterTable(const ASTNode* ast) {
 #endif
     return res;
 }
+
+ExecuteResult DDLExecutor::executeCreateIndex(const ASTNode* ast) {
+    ExecuteResult res;
+    res.msg = "Query OK: Index '" + ast->columns[0] + "' created on '" + ast->tbl + "(" + ast->columns[1] + ")' (Stub).";
+    return res;
+}
+
+ExecuteResult DDLExecutor::executeDropIndex(const ASTNode* ast) {
+    ExecuteResult res;
+    res.msg = "Query OK: Index '" + ast->columns[0] + "' dropped from '" + ast->tbl + "' (Stub).";
+    return res;
+}
+
+ExecuteResult DDLExecutor::executeShowIndexes(const ASTNode* ast) {
+    ExecuteResult res;
+    res.headers = {"Table", "Non_unique", "Key_name", "Column_name"};
+    res.rows.push_back({ast->tbl, "1", "stub_idx", "stub_col"});
+    res.msg = "Query OK: 1 row in set (Stub).";
+    return res;
+}
+
+ExecuteResult DDLExecutor::executeCreateView(const ASTNode* ast) {
+    ExecuteResult res;
+    res.msg = "Query OK: View '" + ast->columns[0] + "' created as '" + ast->values[0] + "' (Stub).";
+    return res;
+}
