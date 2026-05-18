@@ -501,21 +501,69 @@ void HttpServer::Start(int port) {
             return;
         }
 
-        // 按分号切分，跳过空语句
+        // 按行预处理：跳过空白行和 -- 单行注释，再按分号切分
+        // 注意：不处理 /* */ 块注释
         std::vector<std::string> statements;
-        std::string current;
-        bool inString = false;
-        char stringChar = 0;
 
-        for (size_t i = 0; i < script.size(); ++i) {
-            char ch = script[i];
-            if (!inString && (ch == '\'' || ch == '"')) {
-                inString = true;
-                stringChar = ch;
-            } else if (inString && ch == stringChar) {
-                inString = false;
-            } else if (!inString && ch == ';') {
-                // 去除前后空白
+        {
+            std::string cleaned;
+            cleaned.reserve(script.size());
+
+            bool inString = false;
+            char stringChar = 0;
+
+            for (size_t i = 0; i < script.size(); ++i) {
+                char ch = script[i];
+                char next = (i + 1 < script.size()) ? script[i + 1] : '\0';
+
+                // 检测 -- 单行注释（仅在字符串外）
+                if (!inString && ch == '-' && next == '-') {
+                    // 跳过直到行尾（\n 或 \r\n）
+                    i += 2;  // 跳过 --
+                    while (i < script.size() && script[i] != '\n') ++i;
+                    // i 指向 \n，循环末尾会 continue（跳过 \n），下一轮从下一行开始
+                    continue;
+                }
+
+                // 字符串引号跟踪
+                if (!inString && (ch == '\'' || ch == '"')) {
+                    inString = true;
+                    stringChar = ch;
+                } else if (inString && ch == stringChar) {
+                    inString = false;
+                }
+
+                cleaned += ch;
+            }
+
+            // 在清理后的文本上按分号切分
+            std::string current;
+            inString = false;
+            stringChar = 0;
+
+            for (size_t i = 0; i < cleaned.size(); ++i) {
+                char ch = cleaned[i];
+                if (!inString && (ch == '\'' || ch == '"')) {
+                    inString = true;
+                    stringChar = ch;
+                } else if (inString && ch == stringChar) {
+                    inString = false;
+                } else if (!inString && ch == ';') {
+                    size_t s = 0, e = current.size();
+                    while (s < e && std::isspace(static_cast<unsigned char>(current[s]))) ++s;
+                    while (e > s && std::isspace(static_cast<unsigned char>(current[e - 1]))) --e;
+                    std::string stmt = current.substr(s, e - s);
+                    if (!stmt.empty()) {
+                        statements.push_back(stmt);
+                    }
+                    current.clear();
+                    continue;
+                }
+                current += ch;
+            }
+
+            // 处理最后一条（可能没有分号结尾）
+            {
                 size_t s = 0, e = current.size();
                 while (s < e && std::isspace(static_cast<unsigned char>(current[s]))) ++s;
                 while (e > s && std::isspace(static_cast<unsigned char>(current[e - 1]))) --e;
@@ -523,20 +571,6 @@ void HttpServer::Start(int port) {
                 if (!stmt.empty()) {
                     statements.push_back(stmt);
                 }
-                current.clear();
-                continue;
-            }
-            current += ch;
-        }
-
-        // 处理最后一条（可能没有分号结尾）
-        {
-            size_t s = 0, e = current.size();
-            while (s < e && std::isspace(static_cast<unsigned char>(current[s]))) ++s;
-            while (e > s && std::isspace(static_cast<unsigned char>(current[e - 1]))) --e;
-            std::string stmt = current.substr(s, e - s);
-            if (!stmt.empty()) {
-                statements.push_back(stmt);
             }
         }
 

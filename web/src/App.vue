@@ -701,7 +701,15 @@ async function runScriptFile(file) {
             error: payload.failCount > 0 ? `${payload.failCount} 条失败` : "",
         };
 
-        // 刷新可能被脚本修改的表
+        // 刷新数据库列表（脚本可能创建/删除了数据库）
+        await loadDatabases({ silent: true });
+
+        // 如果当前有选中的数据库，刷新该库的表列表
+        if (currentDatabase.value) {
+            await loadTables({ silent: true });
+        }
+
+        // 刷新当前表的 schema 和数据（脚本可能修改了当前表）
         if (currentTable.value) {
             await Promise.all([
                 loadSchema(currentTable.value, { silent: true }),
