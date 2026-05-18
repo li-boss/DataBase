@@ -1,5 +1,6 @@
 // src/storage/file_manager.cpp
 #include "../../include/storage/file_manager.h"
+#include "../../include/storage/bplus_tree.h"
 #include "../../include/common/db_types.h"
 #include <filesystem>
 #include <unordered_map>
@@ -120,4 +121,66 @@ bool FileManager::appendBlock(const std::string& filepath, const void* data, siz
     if (!ofs.is_open()) return false;
     ofs.write(reinterpret_cast<const char*>(data), size);
     return ofs.good();
+}
+
+// ─── 索引文件读写（.idx）────────────────────────────
+
+bool FileManager::createIndexFile(const std::string& idxPath, const IndexHeader& hdr) {
+    std::ofstream ofs(idxPath, std::ios::binary);
+    if (!ofs.is_open()) return false;
+
+    // 初始化 B+ Tree 元数据
+    IndexHeader hdrCopy = hdr;
+    hdrCopy.reserved[0] = 0;  // rootPageId = 0 (空树)
+    hdrCopy.reserved[1] = 1;  // nextPageId = 1 (首次 alloc 从 1 开始)
+    hdrCopy.reserved[2] = 0;  // keySize = 0 (由 BPlusTree 构造时回填)
+    hdrCopy.entryCount = 0;
+
+    ofs.write(reinterpret_cast<const char*>(&hdrCopy), sizeof(IndexHeader));
+    return ofs.good();
+}
+
+bool FileManager::writeIndexHeader(const std::string& idxPath, const IndexHeader& hdr) {
+    // 使用 readStruct/writeStruct 的 offset 版本，只覆写头部
+    // writeStruct 用 std::ios::in | std::ios::out 打开，支持随机写入
+    return writeStruct(idxPath, hdr, 0);
+}
+
+bool FileManager::readIndexHeader(const std::string& idxPath, IndexHeader& outHdr) {
+    return readStruct(idxPath, outHdr, 0);
+}
+
+bool FileManager::appendIndexEntry(const std::string& idxPath,
+                                     const void* keyData,
+                                     uint32_t keySize,
+                                     uint32_t recordOffset) {
+    BPlusTree tree(idxPath, keySize);
+    return tree.insert(keyData, recordOffset);
+}
+
+bool FileManager::lookupIndexEntry(const std::string& idxPath,
+                                    const void* keyData,
+                                    uint32_t keySize,
+                                    std::vector<uint32_t>& outOffsets) {
+    BPlusTree tree(idxPath, keySize);
+    return tree.search(keyData, outOffsets);
+}
+
+// ─── lookupIndexRange：范围查找（<, >, <=, >=）─────
+bool FileManager::lookupIndexRange(const std::string& idxPath,
+                                   const void* keyData,
+                                   uint32_t keySize,
+                                   uint32_t keyType,
+                                   const std::string& op,
+                                   std::vector<uint32_t>& outOffsets) {
+    BPlusTree tree(idxPath, keySize);
+    return tree.searchRange(keyData, keyType, op, outOffsets);
+}
+
+bool FileManager::removeIndexEntry(const std::string& idxPath,
+                                    const void* keyData,
+                                    uint32_t keySize,
+                                    uint32_t recordOffset) {
+    BPlusTree tree(idxPath, keySize);
+    return tree.remove(keyData, recordOffset);
 }

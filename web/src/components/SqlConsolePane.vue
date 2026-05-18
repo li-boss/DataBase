@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from "vue";
+import { computed, ref } from "vue";
 
 const props = defineProps({
     currentTable: {
@@ -11,6 +11,10 @@ const props = defineProps({
         default: "",
     },
     loading: {
+        type: Boolean,
+        default: false,
+    },
+    scriptLoading: {
         type: Boolean,
         default: false,
     },
@@ -33,7 +37,29 @@ const props = defineProps({
     },
 });
 
-defineEmits(["update:sqlText", "run", "fill-current", "toggle", "resize-start"]);
+const emit = defineEmits([
+    "update:sqlText",
+    "run",
+    "run-script",
+    "fill-current",
+    "toggle",
+    "resize-start",
+]);
+
+const fileInput = ref(null);
+
+function triggerFileUpload() {
+    fileInput.value?.click();
+}
+
+function handleFileChange(event) {
+    const file = event.target.files?.[0];
+    if (file) {
+        emit("run-script", file);
+    }
+    // 重置以允许重复选择同一文件
+    event.target.value = "";
+}
 
 const resultColumns = computed(() => props.result.headers.map((header) => ({
     title: header,
@@ -73,6 +99,14 @@ const collapsedSummary = computed(() => {
         :class="{ 'is-expanded': expanded, 'is-collapsed': !expanded }"
         :style="{ height: `${panelHeight}px` }"
     >
+        <!-- 隐藏的文件选择器，用于上传 SQL 脚本 -->
+        <input
+            ref="fileInput"
+            type="file"
+            accept=".sql,.txt"
+            style="display:none"
+            @change="handleFileChange"
+        />
         <button
             type="button"
             class="sql-pane-resizer"
@@ -91,6 +125,14 @@ const collapsedSummary = computed(() => {
                 </span>
             </div>
             <div class="pane-head-actions">
+                <a-button
+                    v-if="expanded"
+                    size="small"
+                    :loading="scriptLoading"
+                    @click="triggerFileUpload"
+                >
+                    上传脚本
+                </a-button>
                 <a-button
                     v-if="expanded"
                     size="small"

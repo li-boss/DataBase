@@ -34,8 +34,12 @@ endif()
 # 3. 源码收集与核心库构建 (RuankoCore)
 set(STORAGE_SRC
     src/storage/file_manager.cpp
+    src/storage/bplus_tree.cpp
     src/storage/buffer_pool.cpp
     src/storage/dict_manager.cpp
+    src/storage/index_manager.cpp
+    src/storage/log_manager.cpp
+    src/storage/transaction_manager.cpp
 )
 
 set(ENGINE_SRC
@@ -98,3 +102,18 @@ add_test(NAME Storage_RecordRW_Test COMMAND test_record_rw)
 add_executable(test_script tests/test_script.cpp)
 target_link_libraries(test_script PRIVATE RuankoCore)
 add_test(NAME Engine_Script_Test COMMAND test_script)
+
+# 第五阶段：DML + 索引联动集成测试
+add_executable(test_dml_index tests/test_dml_index.cpp)
+target_link_libraries(test_dml_index PRIVATE RuankoCore)
+add_test(NAME DML_Index_Integration_Test COMMAND test_dml_index)
+
+# 解析器单元测试 (覆盖 17 种 StmtType)
+add_executable(test_parser tests/test_parser.cpp)
+target_link_libraries(test_parser PRIVATE RuankoCore)
+add_test(NAME Parser_Unit_Test COMMAND test_parser)
+
+# 第六阶段：全功能测试套件 (串联 6 个测试脚本)
+add_executable(test_full_features tests/test_full_features.cpp)
+target_link_libraries(test_full_features PRIVATE RuankoCore)
+add_test(NAME Full_Features_Test COMMAND test_full_features)

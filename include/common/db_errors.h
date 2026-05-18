@@ -40,6 +40,13 @@ enum class ErrorCode : uint16_t {
     // Constraints (0x60)
     DB_ERR_PK_VIOLATION       = 0x0060,
     DB_ERR_NOT_NULL_VIOLATION = 0x0061,
+
+    // Index (0x70)
+    DB_ERR_INDEX_EXISTS       = 0x0070,
+    DB_ERR_INDEX_NOT_FOUND    = 0x0071,
+    DB_ERR_INDEX_FILE_CORRUPTED = 0x0072,
+    DB_ERR_TX_ACTIVE          = 0x0080,
+    DB_ERR_TX_NOT_ACTIVE      = 0x0081,
 };
 
 inline const char* getErrorMessage(ErrorCode err) {
@@ -75,6 +82,12 @@ inline const char* getErrorMessage(ErrorCode err) {
 
         case ErrorCode::DB_ERR_PK_VIOLATION:          return "Primary key conflict";
         case ErrorCode::DB_ERR_NOT_NULL_VIOLATION:    return "NOT NULL violation";
+
+        case ErrorCode::DB_ERR_INDEX_EXISTS:          return "Index already exists";
+        case ErrorCode::DB_ERR_INDEX_NOT_FOUND:       return "Index not found";
+        case ErrorCode::DB_ERR_INDEX_FILE_CORRUPTED:  return "Index file corrupted";
+        case ErrorCode::DB_ERR_TX_ACTIVE:               return "Transaction already active";
+        case ErrorCode::DB_ERR_TX_NOT_ACTIVE:           return "No active transaction";
 
         default:                              return "Undefined error code";
     }

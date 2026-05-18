@@ -241,4 +241,11 @@ export const api = {
             },
         });
     },
+
+    runScript(sql) {
+        return request("/api/script", {
+            method: "POST",
+            body: { sql },
+        });
+    },
 };

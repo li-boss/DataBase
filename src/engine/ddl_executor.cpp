@@ -9,6 +9,8 @@
 #include <cstring>
 #include <ctime>
 
+extern std::string g_currentDbDir;
+
 bool DDLExecutor::createTable(const std::string& tableName, const std::vector<ColumnDef>& fields) {
     std::string dbDir = DictManager::GetCurrentDB();
     if (dbDir.empty()) {
@@ -69,6 +71,11 @@ bool DDLExecutor::createTable(const std::string& tableName, const std::vector<Co
 
 bool DDLExecutor::dropTable(const std::string& tableName) {
     std::string dbDir = DictManager::GetCurrentDB();
+    std::string tbFile = dbDir + "/" + tableName + ".tb";
+    if (!FileManager::fileExists(tbFile)) {
+        std::cerr << "[Error] Table does not exist: " << tableName << std::endl;
+        return false;
+    }
     FileManager::deleteFile(dbDir + "/" + tableName + ".tb");
     FileManager::deleteFile(dbDir + "/" + tableName + ".tdf");
     FileManager::deleteFile(dbDir + "/" + tableName + ".trd");

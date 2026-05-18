@@ -46,6 +46,23 @@ static std::string trimToken(const std::string& str) {
     return s;
 }
 
+// 辅助：读取一个 WHERE 条件 (col op val)
+static bool readSingleCondition(std::stringstream& ss, SingleCondition& cond, bool stripQuotes = true) {
+    std::string token;
+    if (!(ss >> token)) return false;
+    cond.column = toUpperCase(trimToken(token));
+    if (!(ss >> token)) return false;
+    cond.op = trimToken(token);
+    if (!(ss >> token)) return false;
+    cond.value = trimToken(token);
+    if (stripQuotes) {
+        std::string& v = cond.value;
+        if ((v.front() == '\'' && v.back() == '\'') || (v.front() == '"' && v.back() == '"'))
+            v = v.substr(1, v.size() - 2);
+    }
+    return true;
+}
+
 // -----------------------------------------------------------------------------
 // 核心解析器：将原始 SQL 字符串映射为 ASTNode 对象
 // -----------------------------------------------------------------------------
@@ -117,14 +134,14 @@ std::unique_ptr<ASTNode> SqlParser::Parse(const std::string& sql) {
                     node->tbl = tblAndCol.substr(0, paren);
                     std::string col = tblAndCol.substr(paren + 1);
                     if (col.back() == ')') col = col.substr(0, col.size() - 1);
-                    node->columns.push_back(col); // 列名
+                    node->columns.push_back(toUpperCase(col)); // 列名
                 } else {
                     node->tbl = tblAndCol;
                     ss >> token;
                     std::string col = trimToken(token);
                     if (col.front() == '(') col = col.substr(1);
                     if (col.back() == ')') col = col.substr(0, col.size() - 1);
-                    node->columns.push_back(col); // 列名
+                    node->columns.push_back(toUpperCase(col)); // 列名
                 }
             }
         }
@@ -181,18 +198,21 @@ std::unique_ptr<ASTNode> SqlParser::Parse(const std::string& sql) {
         node->db = trimToken(token);
     }
     else if (keyword == "SHOW") {
-        // 解析 SHOW TABLES
+        // 解析 SHOW TABLES / SHOW INDEXES <表名>
         ss >> token;
         std::string sub = toUpperCase(trimToken(token));
         if (sub == "TABLES") {
             node->type = StmtType::SHOW_TABLES;
-        } else if (sub == "INDEXES") {
-            // 解析 SHOW INDEXES FROM <表名>
+        } else if (sub == "INDEXES" || sub == "INDEX") {
             node->type = StmtType::SHOW_INDEXES;
-            ss >> token; // 预期 FROM
-            if (toUpperCase(trimToken(token)) == "FROM") {
-                ss >> token;
-                node->tbl = trimToken(token);
+            if (ss >> token) {
+                std::string fromOrName = toUpperCase(trimToken(token));
+                if (fromOrName == "FROM" || fromOrName == "ON") {
+                    ss >> token;
+                    node->tbl = trimToken(token);
+                } else {
+                    node->tbl = trimToken(token);
+                }
             }
         }
     }
@@ -273,9 +293,25 @@ std::unique_ptr<ASTNode> SqlParser::Parse(const std::string& sql) {
         // 处理可能存在的 WHERE 语句 
         if (ss >> token && toUpperCase(trimToken(token)) == "WHERE") {
             node->where.hasWhere = true;
-            ss >> token; node->where.column = trimToken(token); // 例: id
-            ss >> token; node->where.op = trimToken(token);     // 例: =
-            ss >> token; node->where.value = trimToken(token);  // 例: 5
+            SingleCondition cond;
+            if (readSingleCondition(ss, cond)) {
+                node->where.conditions.push_back(std::move(cond));
+            }
+            // 循环读取 AND/OR + 后续条件
+            while (ss >> token) {
+                std::string logicKw = toUpperCase(trimToken(token));
+                if (logicKw == "AND" || logicKw == "OR") {
+                    node->where.logicOps.push_back(logicKw == "AND" ? LogicOp::AND : LogicOp::OR);
+                    SingleCondition nextCond;
+                    if (readSingleCondition(ss, nextCond)) {
+                        node->where.conditions.push_back(std::move(nextCond));
+                    } else {
+                        break;
+                    }
+                } else {
+                    break; // 不是 AND/OR，可能是 ORDER BY/LIMIT 等后续关键字
+                }
+            }
         }
     }
     else if (keyword == "ALTER") {
@@ -295,11 +331,11 @@ std::unique_ptr<ASTNode> SqlParser::Parse(const std::string& sql) {
                 // 读取 COLUMN 关键字(可选)
                 if (ss >> token && toUpperCase(trimToken(token)) != "COLUMN") {
                     // 不是COLUMN，回退——这是列名
-                    node->alterColumnName = trimToken(token);
-                    if (ss >> token) node->alterColumnType = trimToken(token); // 类型
+                    node->alterColumnName = toUpperCase(trimToken(token));
+                    if (ss >> token) node->alterColumnType = toUpperCase(trimToken(token)); // 类型
                 } else {
-                    ss >> token; node->alterColumnName = trimToken(token); // 列名
-                    if (ss >> token) node->alterColumnType = trimToken(token); // 类型
+                    ss >> token; node->alterColumnName = toUpperCase(trimToken(token)); // 列名
+                    if (ss >> token) node->alterColumnType = toUpperCase(trimToken(token)); // 类型
                 }
                 // 读取约束
                 while (ss >> token) {
@@ -320,13 +356,13 @@ std::unique_ptr<ASTNode> SqlParser::Parse(const std::string& sql) {
                 node->alterAction = AlterAction::DROP_COLUMN;
                 if (ss >> token && toUpperCase(trimToken(token)) == "COLUMN")
                     ss >> token;
-                node->alterColumnName = trimToken(token);
+                node->alterColumnName = toUpperCase(trimToken(token));
             } else if (actionStr == "MODIFY") {
                 node->alterAction = AlterAction::MODIFY_COLUMN;
                 if (ss >> token && toUpperCase(trimToken(token)) == "COLUMN")
                     ss >> token;
-                node->alterColumnName = trimToken(token);
-                if (ss >> token) node->alterColumnType = trimToken(token); // 类型
+                node->alterColumnName = toUpperCase(trimToken(token));
+                if (ss >> token) node->alterColumnType = toUpperCase(trimToken(token)); // 类型
 
                 // 读取约束（与 ADD 相同逻辑）
                 while (ss >> token) {
@@ -354,7 +390,7 @@ std::unique_ptr<ASTNode> SqlParser::Parse(const std::string& sql) {
         if (toUpperCase(trimToken(token)) == "SET") {
             // 读 SET 列名
             ss >> token;
-            node->columns.push_back(trimToken(token)); // set column
+            node->columns.push_back(toUpperCase(trimToken(token))); // set column
             // 显式消费 '=' 号（ss >> token 会读到 '='，必须丢弃）
             std::string eqToken;
             if (ss >> eqToken && trimToken(eqToken) != "=") {
@@ -369,16 +405,27 @@ std::unique_ptr<ASTNode> SqlParser::Parse(const std::string& sql) {
             }
             node->values.push_back(val);
 
-            // 可选 WHERE 子句（与 SELECT 相同逻辑）
+            // 可选 WHERE 子句（支持 AND / OR）
             if (ss >> token && toUpperCase(trimToken(token)) == "WHERE") {
                 node->where.hasWhere = true;
-                ss >> token; node->where.column = trimToken(token);
-                ss >> token; node->where.op = trimToken(token);
-                ss >> token; node->where.value = trimToken(token);
-                // 去引号
-                std::string& wv = node->where.value;
-                if ((wv.front() == '\'' && wv.back() == '\'') || (wv.front() == '"' && wv.back() == '"'))
-                    wv = wv.substr(1, wv.size() - 2);
+                SingleCondition cond;
+                if (readSingleCondition(ss, cond)) {
+                    node->where.conditions.push_back(std::move(cond));
+                }
+                while (ss >> token) {
+                    std::string logicKw = toUpperCase(trimToken(token));
+                    if (logicKw == "AND" || logicKw == "OR") {
+                        node->where.logicOps.push_back(logicKw == "AND" ? LogicOp::AND : LogicOp::OR);
+                        SingleCondition nextCond;
+                        if (readSingleCondition(ss, nextCond)) {
+                            node->where.conditions.push_back(std::move(nextCond));
+                        } else {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
             }
         }
     }
@@ -390,27 +437,55 @@ std::unique_ptr<ASTNode> SqlParser::Parse(const std::string& sql) {
             ss >> token;
             node->tbl = trimToken(token);
 
-            // 可选 WHERE 子句
+            // 可选 WHERE 子句（支持 AND / OR）
             if (ss >> token && toUpperCase(trimToken(token)) == "WHERE") {
                 node->where.hasWhere = true;
-                ss >> token; node->where.column = trimToken(token);
-                ss >> token; node->where.op = trimToken(token);
-                ss >> token; node->where.value = trimToken(token);
-                // 去引号
-                std::string& wv = node->where.value;
-                if ((wv.front() == '\'' && wv.back() == '\'') || (wv.front() == '"' && wv.back() == '"'))
-                    wv = wv.substr(1, wv.size() - 2);
+                SingleCondition cond;
+                if (readSingleCondition(ss, cond)) {
+                    node->where.conditions.push_back(std::move(cond));
+                }
+                while (ss >> token) {
+                    std::string logicKw = toUpperCase(trimToken(token));
+                    if (logicKw == "AND" || logicKw == "OR") {
+                        node->where.logicOps.push_back(logicKw == "AND" ? LogicOp::AND : LogicOp::OR);
+                        SingleCondition nextCond;
+                        if (readSingleCondition(ss, nextCond)) {
+                            node->where.conditions.push_back(std::move(nextCond));
+                        } else {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
             }
         }
     }
-    else if (keyword == "BEGIN") {
-        node->type = StmtType::BEGIN_TRANS;
+    else if (keyword == "BEGIN" || keyword == "START") {
+        // 解析 BEGIN [TRANSACTION [tablename]] 或 BEGIN [tablename]
+        node->type = StmtType::BEGIN_TX;
+        // 消费可选的 TRANSACTION / TRAN
+        if (ss >> token) {
+            std::string sub = toUpperCase(trimToken(token));
+            if (sub == "TRANSACTION" || sub == "TRAN") {
+                // 消费 TRANSACTION 后，尝试读表名
+                if (ss >> token) {
+                    std::string sub2 = toUpperCase(trimToken(token));
+                    if (sub2 != "TRANSACTION" && sub2 != "TRAN") {
+                        node->tbl = trimToken(token);
+                    }
+                }
+            } else {
+                // 不认识的关键字，存到 tbl 作为可能的表名
+                node->tbl = trimToken(token);
+            }
+        }
     }
     else if (keyword == "COMMIT") {
-        node->type = StmtType::COMMIT_TRANS;
+        node->type = StmtType::COMMIT_TX;
     }
     else if (keyword == "ROLLBACK") {
-        node->type = StmtType::ROLLBACK_TRANS;
+        node->type = StmtType::ROLLBACK_TX;
     }
     else {
         // 如果都不匹配，判定为未知语法
