@@ -321,7 +321,40 @@ ExecuteResult DMLExecutor::selectRecord(const ASTNode* ast) {
         res.error = 1; res.msg = "Error: " + std::string(getErrorMessage(err)); return res;
     }
 
-    for (const auto& f : fields) res.headers.push_back(f.fieldName);
+    // ── 列投影（SELECT 指定列 or SELECT *）──
+    bool projectAll = false;
+    if (ast->columns.empty() || (ast->columns.size() == 1 && ast->columns[0] == "*")) {
+        projectAll = true;
+    }
+
+    std::vector<size_t> projectedIndices;
+    if (projectAll) {
+        for (size_t i = 0; i < fields.size(); ++i) {
+            res.headers.push_back(fields[i].fieldName);
+            projectedIndices.push_back(i);
+        }
+    } else {
+        for (const auto& colName : ast->columns) {
+            std::string upperCol = colName;
+            for (auto& c : upperCol) c = std::toupper(static_cast<unsigned char>(c));
+            bool found = false;
+            for (size_t i = 0; i < fields.size(); ++i) {
+                std::string fieldNameStr = fields[i].fieldName;
+                for (auto& c : fieldNameStr) c = std::toupper(static_cast<unsigned char>(c));
+                if (upperCol == fieldNameStr) {
+                    res.headers.push_back(fields[i].fieldName);
+                    projectedIndices.push_back(i);
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                res.error = 1;
+                res.msg = "Error: Column '" + colName + "' not found.";
+                return res;
+            }
+        }
+    }
 
     // ── 索引加速（等值查询 + 范围查询）──
     std::vector<uint32_t> matchedOffsets;
@@ -500,13 +533,16 @@ ExecuteResult DMLExecutor::selectRecord(const ASTNode* ast) {
             void* pageData = BufferPool::GetPage(fd, pid);
             if (!pageData) continue;
             char* rp = static_cast<char*>(pageData) + pageOff * header.recordSize;
-            std::vector<std::string> row;
-            for (const auto& f : fields) row.push_back(readFieldValue(rp, f));
+            std::vector<std::string> fullRow;
+            for (const auto& f : fields) fullRow.push_back(readFieldValue(rp, f));
             // 索引只覆盖了第一个等值条件，剩余条件需要逐条验证
-            if (!evaluateCompoundWhere(row, ast->where, fields)) {
+            if (!evaluateCompoundWhere(fullRow, ast->where, fields)) {
                 BufferPool::ReleasePage(fd, pid);
                 continue;
             }
+            // 列投影
+            std::vector<std::string> row;
+            for (auto pi : projectedIndices) row.push_back(fullRow[pi]);
             res.rows.push_back(row);
             BufferPool::ReleasePage(fd, pid);
         }
@@ -525,19 +561,22 @@ ExecuteResult DMLExecutor::selectRecord(const ASTNode* ast) {
             if (!pageData) continue;
             for (uint32_t i = 0; i < recordsPerPage && recordsRead < header.recordCount; ++i) {
                 char* recordPtr = static_cast<char*>(pageData) + i * header.recordSize;
-                std::vector<std::string> row;
+                std::vector<std::string> fullRow;
                 for (const auto& f : fields) {
                     switch (f.type) {
-                        case DataType::TYPE_INT: { int32_t val; std::memcpy(&val, recordPtr + f.offset, 4); row.push_back(std::to_string(val)); break; }
-                        case DataType::TYPE_FLOAT: { float val; std::memcpy(&val, recordPtr + f.offset, 4); std::ostringstream oss; oss << val; row.push_back(oss.str()); break; }
-                        case DataType::TYPE_DOUBLE: { double val; std::memcpy(&val, recordPtr + f.offset, 8); std::ostringstream oss; oss << val; row.push_back(oss.str()); break; }
-                        case DataType::TYPE_BOOLEAN: row.push_back(boolToString(*(recordPtr + f.offset))); break;
-                        default: { size_t bufLen = f.length > 512 ? 511 : f.length; char* buf = new char[bufLen + 1](); std::strncpy(buf, recordPtr + f.offset, bufLen); row.push_back(std::string(buf)); delete[] buf; break; }
+                        case DataType::TYPE_INT: { int32_t val; std::memcpy(&val, recordPtr + f.offset, 4); fullRow.push_back(std::to_string(val)); break; }
+                        case DataType::TYPE_FLOAT: { float val; std::memcpy(&val, recordPtr + f.offset, 4); std::ostringstream oss; oss << val; fullRow.push_back(oss.str()); break; }
+                        case DataType::TYPE_DOUBLE: { double val; std::memcpy(&val, recordPtr + f.offset, 8); std::ostringstream oss; oss << val; fullRow.push_back(oss.str()); break; }
+                        case DataType::TYPE_BOOLEAN: fullRow.push_back(boolToString(*(recordPtr + f.offset))); break;
+                        default: { size_t bufLen = f.length > 512 ? 511 : f.length; char* buf = new char[bufLen + 1](); std::strncpy(buf, recordPtr + f.offset, bufLen); fullRow.push_back(std::string(buf)); delete[] buf; break; }
                     }
                 }
                 if (ast->where.hasWhere) {
-                    if (!evaluateCompoundWhere(row, ast->where, fields)) { recordsRead++; continue; }
+                    if (!evaluateCompoundWhere(fullRow, ast->where, fields)) { recordsRead++; continue; }
                 }
+                // 列投影
+                std::vector<std::string> row;
+                for (auto pi : projectedIndices) row.push_back(fullRow[pi]);
                 res.rows.push_back(row); recordsRead++;
             }
             BufferPool::ReleasePage(fd, pid);
