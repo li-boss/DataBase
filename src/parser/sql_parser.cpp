@@ -50,7 +50,7 @@ static std::string trimToken(const std::string& str) {
 static bool readSingleCondition(std::stringstream& ss, SingleCondition& cond, bool stripQuotes = true) {
     std::string token;
     if (!(ss >> token)) return false;
-    cond.column = trimToken(token);
+    cond.column = toUpperCase(trimToken(token));
     if (!(ss >> token)) return false;
     cond.op = trimToken(token);
     if (!(ss >> token)) return false;
@@ -134,14 +134,14 @@ std::unique_ptr<ASTNode> SqlParser::Parse(const std::string& sql) {
                     node->tbl = tblAndCol.substr(0, paren);
                     std::string col = tblAndCol.substr(paren + 1);
                     if (col.back() == ')') col = col.substr(0, col.size() - 1);
-                    node->columns.push_back(col); // 列名
+                    node->columns.push_back(toUpperCase(col)); // 列名
                 } else {
                     node->tbl = tblAndCol;
                     ss >> token;
                     std::string col = trimToken(token);
                     if (col.front() == '(') col = col.substr(1);
                     if (col.back() == ')') col = col.substr(0, col.size() - 1);
-                    node->columns.push_back(col); // 列名
+                    node->columns.push_back(toUpperCase(col)); // 列名
                 }
             }
         }
@@ -203,16 +203,7 @@ std::unique_ptr<ASTNode> SqlParser::Parse(const std::string& sql) {
         std::string sub = toUpperCase(trimToken(token));
         if (sub == "TABLES") {
             node->type = StmtType::SHOW_TABLES;
-        } else if (sub == "INDEXES") {
-            // 解析 SHOW INDEXES FROM <表名>
-            node->type = StmtType::SHOW_INDEXES;
-            ss >> token; // 预期 FROM
-            if (toUpperCase(trimToken(token)) == "FROM") {
-                ss >> token;
-                node->tbl = trimToken(token);
-            }
-        }
-        else if (showSub == "INDEXES" || showSub == "INDEX") {
+        } else if (sub == "INDEXES" || sub == "INDEX") {
             node->type = StmtType::SHOW_INDEXES;
             if (ss >> token) {
                 std::string fromOrName = toUpperCase(trimToken(token));
@@ -340,11 +331,11 @@ std::unique_ptr<ASTNode> SqlParser::Parse(const std::string& sql) {
                 // 读取 COLUMN 关键字(可选)
                 if (ss >> token && toUpperCase(trimToken(token)) != "COLUMN") {
                     // 不是COLUMN，回退——这是列名
-                    node->alterColumnName = trimToken(token);
-                    if (ss >> token) node->alterColumnType = trimToken(token); // 类型
+                    node->alterColumnName = toUpperCase(trimToken(token));
+                    if (ss >> token) node->alterColumnType = toUpperCase(trimToken(token)); // 类型
                 } else {
-                    ss >> token; node->alterColumnName = trimToken(token); // 列名
-                    if (ss >> token) node->alterColumnType = trimToken(token); // 类型
+                    ss >> token; node->alterColumnName = toUpperCase(trimToken(token)); // 列名
+                    if (ss >> token) node->alterColumnType = toUpperCase(trimToken(token)); // 类型
                 }
                 // 读取约束
                 while (ss >> token) {
@@ -365,13 +356,13 @@ std::unique_ptr<ASTNode> SqlParser::Parse(const std::string& sql) {
                 node->alterAction = AlterAction::DROP_COLUMN;
                 if (ss >> token && toUpperCase(trimToken(token)) == "COLUMN")
                     ss >> token;
-                node->alterColumnName = trimToken(token);
+                node->alterColumnName = toUpperCase(trimToken(token));
             } else if (actionStr == "MODIFY") {
                 node->alterAction = AlterAction::MODIFY_COLUMN;
                 if (ss >> token && toUpperCase(trimToken(token)) == "COLUMN")
                     ss >> token;
-                node->alterColumnName = trimToken(token);
-                if (ss >> token) node->alterColumnType = trimToken(token); // 类型
+                node->alterColumnName = toUpperCase(trimToken(token));
+                if (ss >> token) node->alterColumnType = toUpperCase(trimToken(token)); // 类型
 
                 // 读取约束（与 ADD 相同逻辑）
                 while (ss >> token) {
@@ -399,7 +390,7 @@ std::unique_ptr<ASTNode> SqlParser::Parse(const std::string& sql) {
         if (toUpperCase(trimToken(token)) == "SET") {
             // 读 SET 列名
             ss >> token;
-            node->columns.push_back(trimToken(token)); // set column
+            node->columns.push_back(toUpperCase(trimToken(token))); // set column
             // 显式消费 '=' 号（ss >> token 会读到 '='，必须丢弃）
             std::string eqToken;
             if (ss >> eqToken && trimToken(eqToken) != "=") {

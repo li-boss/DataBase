@@ -64,9 +64,11 @@ ExecuteResult RecordManager::Execute(const ASTNode* ast) {
             return DDLExecutor::showTables();
         case StmtType::CREATE_INDEX: {
             ExecuteResult r;
-            std::string idxName = ast->db;
+            std::string idxName = ast->columns.empty() ? "" : ast->columns[0];
             std::string tblName = ast->tbl;
-            std::vector<std::string> colNames = ast->columns;
+            std::vector<std::string> colNames;
+            for (size_t ci = 1; ci < ast->columns.size(); ++ci)
+                colNames.push_back(ast->columns[ci]);
             ErrorCode ec = IndexManager::CreateIndex(idxName, tblName, colNames);
             if (ec == ErrorCode::DB_OK) {
                 std::string colsStr;
@@ -85,7 +87,7 @@ ExecuteResult RecordManager::Execute(const ASTNode* ast) {
         }
         case StmtType::DROP_INDEX: {
             ExecuteResult r;
-            std::string idxName = ast->db;
+            std::string idxName = ast->columns.empty() ? "" : ast->columns[0];
             ErrorCode ec = IndexManager::DropIndex(idxName);
             if (ec == ErrorCode::DB_OK) {
                 r.msg = "Query OK: Index '" + idxName + "' dropped.";
@@ -183,14 +185,6 @@ ExecuteResult RecordManager::Execute(const ASTNode* ast) {
                 r.error ? LogManager::Level::ERROR : LogManager::Level::INFO);
             return r;
         }
-        case StmtType::UPDATE:
-            return DMLExecutor::updateRecord(ast);
-        case StmtType::BEGIN_TRANS:
-            return DMLExecutor::executeBegin(ast);
-        case StmtType::COMMIT_TRANS:
-            return DMLExecutor::executeCommit(ast);
-        case StmtType::ROLLBACK_TRANS:
-            return DMLExecutor::executeRollback(ast);
         case StmtType::CREATE_VIEW:
             return DDLExecutor::executeCreateView(ast);
         default: {
