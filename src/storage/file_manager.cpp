@@ -1,6 +1,5 @@
 // src/storage/file_manager.cpp
 #include "../../include/storage/file_manager.h"
-#include "../../include/storage/bplus_tree.h"
 #include "../../include/common/db_types.h"
 #include <filesystem>
 #include <unordered_map>
@@ -128,21 +127,11 @@ bool FileManager::appendBlock(const std::string& filepath, const void* data, siz
 bool FileManager::createIndexFile(const std::string& idxPath, const IndexHeader& hdr) {
     std::ofstream ofs(idxPath, std::ios::binary);
     if (!ofs.is_open()) return false;
-
-    // 初始化 B+ Tree 元数据
-    IndexHeader hdrCopy = hdr;
-    hdrCopy.reserved[0] = 0;  // rootPageId = 0 (空树)
-    hdrCopy.reserved[1] = 1;  // nextPageId = 1 (首次 alloc 从 1 开始)
-    hdrCopy.reserved[2] = 0;  // keySize = 0 (由 BPlusTree 构造时回填)
-    hdrCopy.entryCount = 0;
-
-    ofs.write(reinterpret_cast<const char*>(&hdrCopy), sizeof(IndexHeader));
+    ofs.write(reinterpret_cast<const char*>(&hdr), sizeof(IndexHeader));
     return ofs.good();
 }
 
 bool FileManager::writeIndexHeader(const std::string& idxPath, const IndexHeader& hdr) {
-    // 使用 readStruct/writeStruct 的 offset 版本，只覆写头部
-    // writeStruct 用 std::ios::in | std::ios::out 打开，支持随机写入
     return writeStruct(idxPath, hdr, 0);
 }
 
@@ -154,33 +143,156 @@ bool FileManager::appendIndexEntry(const std::string& idxPath,
                                      const void* keyData,
                                      uint32_t keySize,
                                      uint32_t recordOffset) {
-    BPlusTree tree(idxPath, keySize);
-    return tree.insert(keyData, recordOffset);
+    IndexHeader hdr;
+    if (!readIndexHeader(idxPath, hdr)) return false;
+
+    std::ofstream ofs(idxPath, std::ios::binary | std::ios::app);
+    if (!ofs.is_open()) return false;
+    ofs.write(reinterpret_cast<const char*>(keyData), keySize);
+    ofs.write(reinterpret_cast<const char*>(&recordOffset), sizeof(uint32_t));
+    ofs.close();
+
+    hdr.entryCount++;
+    return writeIndexHeader(idxPath, hdr);
 }
 
 bool FileManager::lookupIndexEntry(const std::string& idxPath,
                                     const void* keyData,
                                     uint32_t keySize,
                                     std::vector<uint32_t>& outOffsets) {
-    BPlusTree tree(idxPath, keySize);
-    return tree.search(keyData, outOffsets);
+    outOffsets.clear();
+    IndexHeader hdr;
+    if (!readIndexHeader(idxPath, hdr)) return false;
+
+    std::ifstream ifs(idxPath, std::ios::binary);
+    if (!ifs.is_open()) return false;
+    ifs.seekg(sizeof(IndexHeader));
+
+    std::vector<char> buf(keySize);
+    uint32_t recOff = 0;
+
+    for (uint32_t i = 0; i < hdr.entryCount; ++i) {
+        ifs.read(buf.data(), keySize);
+        ifs.read(reinterpret_cast<char*>(&recOff), sizeof(uint32_t));
+        if (!ifs) break;
+
+        if (std::memcmp(buf.data(), keyData, keySize) == 0) {
+            outOffsets.push_back(recOff);
+        }
+    }
+    return !outOffsets.empty();
 }
 
-// ─── lookupIndexRange：范围查找（<, >, <=, >=）─────
 bool FileManager::lookupIndexRange(const std::string& idxPath,
                                    const void* keyData,
                                    uint32_t keySize,
                                    uint32_t keyType,
                                    const std::string& op,
                                    std::vector<uint32_t>& outOffsets) {
-    BPlusTree tree(idxPath, keySize);
-    return tree.searchRange(keyData, keyType, op, outOffsets);
+    outOffsets.clear();
+    IndexHeader hdr;
+    if (!readIndexHeader(idxPath, hdr)) return false;
+
+    std::ifstream ifs(idxPath, std::ios::binary);
+    if (!ifs.is_open()) return false;
+    ifs.seekg(sizeof(IndexHeader));
+
+    std::vector<char> buf(keySize);
+    uint32_t recOff = 0;
+
+    for (uint32_t i = 0; i < hdr.entryCount; ++i) {
+        ifs.read(buf.data(), keySize);
+        ifs.read(reinterpret_cast<char*>(&recOff), sizeof(uint32_t));
+        if (!ifs) break;
+
+        bool match = false;
+        if (keyType == static_cast<uint32_t>(DataType::TYPE_INT) ||
+            keyType == static_cast<uint32_t>(DataType::TYPE_DATETIME) ||
+            keyType == static_cast<uint32_t>(DataType::TYPE_BOOLEAN)) {
+            int32_t lv; std::memcpy(&lv, buf.data(), 4);
+            int32_t rv; std::memcpy(&rv, keyData, 4);
+            if (op == "<")  match = (lv < rv);
+            else if (op == ">")  match = (lv > rv);
+            else if (op == "<=") match = (lv <= rv);
+            else if (op == ">=") match = (lv >= rv);
+        } else if (keyType == static_cast<uint32_t>(DataType::TYPE_FLOAT)) {
+            float lv; std::memcpy(&lv, buf.data(), 4);
+            float rv; std::memcpy(&rv, keyData, 4);
+            if (op == "<")  match = (lv < rv);
+            else if (op == ">")  match = (lv > rv);
+            else if (op == "<=") match = (lv <= rv);
+            else if (op == ">=") match = (lv >= rv);
+        } else if (keyType == static_cast<uint32_t>(DataType::TYPE_DOUBLE)) {
+            double lv; std::memcpy(&lv, buf.data(), 8);
+            double rv; std::memcpy(&rv, keyData, 8);
+            if (op == "<")  match = (lv < rv);
+            else if (op == ">")  match = (lv > rv);
+            else if (op == "<=") match = (lv <= rv);
+            else if (op == ">=") match = (lv >= rv);
+        } else {
+            std::string lv(buf.data(), keySize);
+            std::string rv(reinterpret_cast<const char*>(keyData), keySize);
+            if (op == "<")  match = (lv < rv);
+            else if (op == ">")  match = (lv > rv);
+            else if (op == "<=") match = (lv <= rv);
+            else if (op == ">=") match = (lv >= rv);
+        }
+
+        if (match) {
+            outOffsets.push_back(recOff);
+        }
+    }
+    return !outOffsets.empty();
 }
 
 bool FileManager::removeIndexEntry(const std::string& idxPath,
                                     const void* keyData,
                                     uint32_t keySize,
                                     uint32_t recordOffset) {
-    BPlusTree tree(idxPath, keySize);
-    return tree.remove(keyData, recordOffset);
+    IndexHeader hdr;
+    if (!readIndexHeader(idxPath, hdr)) return false;
+
+    std::string tmpPath = idxPath + ".tmp";
+    std::ofstream ofs(tmpPath, std::ios::binary);
+    if (!ofs.is_open()) return false;
+
+    IndexHeader newHdr = hdr;
+    newHdr.entryCount = 0;
+    ofs.write(reinterpret_cast<const char*>(&newHdr), sizeof(IndexHeader));
+
+    std::ifstream ifs(idxPath, std::ios::binary);
+    if (!ifs.is_open()) { std::error_code ec; fs::remove(tmpPath, ec); return false; }
+    ifs.seekg(sizeof(IndexHeader));
+
+    const size_t entrySize = keySize + sizeof(uint32_t);
+    std::vector<char> buf(entrySize);
+    uint32_t newCount = 0;
+
+    for (uint32_t i = 0; i < hdr.entryCount; ++i) {
+        ifs.read(buf.data(), entrySize);
+        if (!ifs) break;
+
+        uint32_t entryRecOff;
+        std::memcpy(&entryRecOff, buf.data() + keySize, sizeof(uint32_t));
+
+        if (std::memcmp(buf.data(), keyData, keySize) == 0 && entryRecOff == recordOffset) {
+            // Deleted
+        } else {
+            ofs.write(buf.data(), entrySize);
+            ++newCount;
+        }
+    }
+    ifs.close();
+    ofs.close();
+
+    newHdr.entryCount = newCount;
+    std::fstream tmpFs(tmpPath, std::ios::binary | std::ios::in | std::ios::out);
+    if (!tmpFs.is_open()) { std::error_code ec; fs::remove(tmpPath, ec); return false; }
+    tmpFs.write(reinterpret_cast<const char*>(&newHdr), sizeof(IndexHeader));
+    tmpFs.close();
+
+    std::error_code ec;
+    fs::remove(idxPath, ec);
+    fs::rename(tmpPath, idxPath, ec);
+    return !ec;
 }

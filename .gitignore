@@ -28,3 +28,35 @@ web/.parcel-cache/
 web/coverage/
 web/.eslintcache
 web/.DS_Store
+
+# Local temp and render outputs
+tmp/
+tmp_render/
+midterm_report_render/
+render_final_assignment/
+render_ruanko_final_rubric/
+render_ruanko_next_stage/
+
+# Office temporary lock files
+~$*
+
+# Generated reports and extracted text
+*.docx
+*.pdf
+*_extracted.txt
+RuankoDB_*.md
+
+# Local report/helper scripts and scratch inputs
+_*.py
+generate_*_docx.py
+render_docx_local.py
+ppt_slides.txt
+projects.xlsx
+test.sql
+
+# Test database artifacts
+test_db/
+testdb/
+api_test_db/
+my_db/
+*.idx

@@ -393,6 +393,7 @@ select {
 
 .pane-alert {
     margin-bottom: 4px;
+    white-space: pre-line;
 }
 
 .builder-layout {

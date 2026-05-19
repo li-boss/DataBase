@@ -35,6 +35,71 @@ static void onSignal(int sig) {
         g_server->stop();  // 使 svr.listen() 返回
     }
 }
+static std::vector<std::string> splitStatements(const std::string& script) {
+    std::vector<std::string> statements;
+    std::string cleaned;
+    cleaned.reserve(script.size());
+
+    bool inString = false;
+    char stringChar = 0;
+
+    for (size_t i = 0; i < script.size(); ++i) {
+        char ch = script[i];
+        char next = (i + 1 < script.size()) ? script[i + 1] : '\0';
+
+        if (!inString && ch == '-' && next == '-') {
+            i += 2;
+            while (i < script.size() && script[i] != '\n') ++i;
+            continue;
+        }
+
+        if (!inString && (ch == '\'' || ch == '"')) {
+            inString = true;
+            stringChar = ch;
+        } else if (inString && ch == stringChar) {
+            inString = false;
+        }
+
+        cleaned += ch;
+    }
+
+    std::string current;
+    inString = false;
+    stringChar = 0;
+
+    for (size_t i = 0; i < cleaned.size(); ++i) {
+        char ch = cleaned[i];
+        if (!inString && (ch == '\'' || ch == '"')) {
+            inString = true;
+            stringChar = ch;
+        } else if (inString && ch == stringChar) {
+            inString = false;
+        } else if (!inString && ch == ';') {
+            size_t s = 0, e = current.size();
+            while (s < e && std::isspace(static_cast<unsigned char>(current[s]))) ++s;
+            while (e > s && std::isspace(static_cast<unsigned char>(current[e - 1]))) --e;
+            std::string stmt = current.substr(s, e - s);
+            if (!stmt.empty()) {
+                statements.push_back(stmt);
+            }
+            current.clear();
+            continue;
+        }
+        current += ch;
+    }
+
+    {
+        size_t s = 0, e = current.size();
+        while (s < e && std::isspace(static_cast<unsigned char>(current[s]))) ++s;
+        while (e > s && std::isspace(static_cast<unsigned char>(current[e - 1]))) --e;
+        std::string stmt = current.substr(s, e - s);
+        if (!stmt.empty()) {
+            statements.push_back(stmt);
+        }
+    }
+
+    return statements;
+}
 
 static json ExecSql(const std::string& sql) {
     json res;
@@ -482,7 +547,44 @@ void HttpServer::Start(int port) {
     svr.Post("/api/query", [](const httplib::Request& req, httplib::Response& res) {
         auto body = json::parse(req.body);
         std::string sql = body.value("sql", "");
-        json j = ExecSql(sql);
+        
+        std::vector<std::string> stmts = splitStatements(sql);
+        json j;
+        if (stmts.empty()) {
+            j["ok"] = false;
+            j["error"] = "Query is empty.";
+            res.set_content(j.dump(), "application/json");
+            return;
+        }
+
+        json lastResult;
+        std::string cumulativeMsg;
+        int executedCount = 0;
+
+        for (size_t i = 0; i < stmts.size(); ++i) {
+            lastResult = ExecSql(stmts[i] + ";");
+            if (!lastResult.value("ok", false)) {
+                j = lastResult;
+                if (stmts.size() > 1) {
+                    j["error"] = "Error on statement " + std::to_string(i + 1) + ": " + lastResult.value("error", "Unknown error");
+                }
+                res.set_content(j.dump(), "application/json");
+                return;
+            }
+            executedCount++;
+            std::string msg = lastResult.value("msg", "");
+            if (!msg.empty()) {
+                if (!cumulativeMsg.empty()) cumulativeMsg += "\n";
+                cumulativeMsg += msg;
+            }
+        }
+
+        j = lastResult;
+        if (stmts.size() > 1) {
+            j["msg"] = "[" + std::to_string(executedCount) + " statement(s) executed successfully]\n" + cumulativeMsg;
+        } else {
+            j["msg"] = cumulativeMsg;
+        }
         res.set_content(j.dump(), "application/json");
     });
 
@@ -501,78 +603,7 @@ void HttpServer::Start(int port) {
             return;
         }
 
-        // 按行预处理：跳过空白行和 -- 单行注释，再按分号切分
-        // 注意：不处理 /* */ 块注释
-        std::vector<std::string> statements;
-
-        {
-            std::string cleaned;
-            cleaned.reserve(script.size());
-
-            bool inString = false;
-            char stringChar = 0;
-
-            for (size_t i = 0; i < script.size(); ++i) {
-                char ch = script[i];
-                char next = (i + 1 < script.size()) ? script[i + 1] : '\0';
-
-                // 检测 -- 单行注释（仅在字符串外）
-                if (!inString && ch == '-' && next == '-') {
-                    // 跳过直到行尾（\n 或 \r\n）
-                    i += 2;  // 跳过 --
-                    while (i < script.size() && script[i] != '\n') ++i;
-                    // i 指向 \n，循环末尾会 continue（跳过 \n），下一轮从下一行开始
-                    continue;
-                }
-
-                // 字符串引号跟踪
-                if (!inString && (ch == '\'' || ch == '"')) {
-                    inString = true;
-                    stringChar = ch;
-                } else if (inString && ch == stringChar) {
-                    inString = false;
-                }
-
-                cleaned += ch;
-            }
-
-            // 在清理后的文本上按分号切分
-            std::string current;
-            inString = false;
-            stringChar = 0;
-
-            for (size_t i = 0; i < cleaned.size(); ++i) {
-                char ch = cleaned[i];
-                if (!inString && (ch == '\'' || ch == '"')) {
-                    inString = true;
-                    stringChar = ch;
-                } else if (inString && ch == stringChar) {
-                    inString = false;
-                } else if (!inString && ch == ';') {
-                    size_t s = 0, e = current.size();
-                    while (s < e && std::isspace(static_cast<unsigned char>(current[s]))) ++s;
-                    while (e > s && std::isspace(static_cast<unsigned char>(current[e - 1]))) --e;
-                    std::string stmt = current.substr(s, e - s);
-                    if (!stmt.empty()) {
-                        statements.push_back(stmt);
-                    }
-                    current.clear();
-                    continue;
-                }
-                current += ch;
-            }
-
-            // 处理最后一条（可能没有分号结尾）
-            {
-                size_t s = 0, e = current.size();
-                while (s < e && std::isspace(static_cast<unsigned char>(current[s]))) ++s;
-                while (e > s && std::isspace(static_cast<unsigned char>(current[e - 1]))) --e;
-                std::string stmt = current.substr(s, e - s);
-                if (!stmt.empty()) {
-                    statements.push_back(stmt);
-                }
-            }
-        }
+        std::vector<std::string> statements = splitStatements(script);
 
         int total = static_cast<int>(statements.size());
         int okCount = 0;
