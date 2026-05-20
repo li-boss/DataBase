@@ -396,6 +396,21 @@ select {
     white-space: pre-line;
 }
 
+/* 多结果集：每个结果块之间添加间距和分割线 */
+.sql-result-block + .sql-result-block {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px dashed var(--line);
+}
+
+.sql-result-label {
+    margin: 0 0 6px;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--primary);
+    letter-spacing: 0.03em;
+}
+
 .builder-layout {
     display: flex;
     flex-direction: column;

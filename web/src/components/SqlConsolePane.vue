@@ -33,6 +33,7 @@ const props = defineProps({
             rows: [],
             message: "",
             error: "",
+            results: [],
         }),
     },
 });
@@ -76,6 +77,40 @@ const resultSource = computed(() => props.result.rows.map((row, rowIndex) => {
     return record;
 }));
 
+// 多结果集支持：返回所有查询结果（优先使用 results 数组，向后兼容单结果）
+const displayResults = computed(() => {
+    const results = props.result.results;
+    if (Array.isArray(results) && results.length > 0) {
+        return results;
+    }
+    // 单结果 fallback
+    if (props.result.headers.length > 0) {
+        return [{ headers: props.result.headers, rows: props.result.rows }];
+    }
+    return [];
+});
+
+// 给定一个结果对象，生成表格列定义
+function makeColumns(res) {
+    return (res.headers || []).map((header) => ({
+        title: header,
+        dataIndex: header,
+        key: header,
+        ellipsis: true,
+    }));
+}
+
+// 给定一个结果对象，生成表格数据源
+function makeDataSource(res, idx) {
+    return (res.rows || []).map((row, rowIndex) => {
+        const record = { key: `sql-result-${idx}-row-${rowIndex}` };
+        (res.headers || []).forEach((header, headerIndex) => {
+            record[header] = row[headerIndex] ?? "";
+        });
+        return record;
+    });
+}
+
 const collapsedSummary = computed(() => {
     if (props.result.error) {
         return "上次执行失败";
@@ -83,6 +118,12 @@ const collapsedSummary = computed(() => {
 
     if (props.result.message) {
         return props.result.message;
+    }
+
+    const results = props.result.results;
+    if (Array.isArray(results) && results.length > 1) {
+        const totalRows = results.reduce((sum, r) => sum + ((r.rows || []).length), 0);
+        return `${results.length} 条查询，共 ${totalRows} 行`;
     }
 
     if (props.currentTable) {
@@ -200,18 +241,28 @@ const collapsedSummary = computed(() => {
                 class="pane-alert"
             />
 
-            <a-table
-                v-if="result.headers.length"
-                size="small"
-                :columns="resultColumns"
-                :data-source="resultSource"
-                :pagination="false"
-                :scroll="{ y: 260, x: 'max-content' }"
-                class="tight-table"
-            />
+            <!-- 多结果集展示 -->
+            <template v-for="(res, idx) in displayResults" :key="idx">
+                <div v-if="res.headers && res.headers.length" class="sql-result-block">
+                    <p v-if="displayResults.length > 1" class="sql-result-label">
+                        结果 {{ idx + 1 }}
+                        <a-typography-text type="secondary" style="font-size:12px">
+                            （{{ res.rows ? res.rows.length : 0 }} 行）
+                        </a-typography-text>
+                    </p>
+                    <a-table
+                        size="small"
+                        :columns="makeColumns(res)"
+                        :data-source="makeDataSource(res, idx)"
+                        :pagination="false"
+                        :scroll="{ y: 200, x: 'max-content' }"
+                        class="tight-table"
+                    />
+                </div>
+            </template>
 
             <a-empty
-                v-else
+                v-if="displayResults.length === 0 && !result.error"
                 :image="false"
                 description="执行后在这里显示结果"
             />

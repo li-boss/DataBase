@@ -635,16 +635,25 @@ async function runSql() {
         rows: [],
         message: "",
         error: "",
+        results: [],
     };
 
     try {
         const payload = await api.query(sql);
-        const result = normalizeGrid(payload);
+        // 解析多结果集：后端返回 results 数组，每个元素包含 headers/rows
+        const rawResults = Array.isArray(payload.results) ? payload.results : [];
+        const parsedResults = rawResults.map((r) => {
+            const g = normalizeGrid(r);
+            return { headers: g.headers, rows: g.rows, message: g.message };
+        });
+        // 如果没有多结果，fallback 到传统单结果
+        const singleResult = normalizeGrid(payload);
         sqlResult.value = {
-            headers: result.headers,
-            rows: result.rows,
-            message: result.message || "SQL 已执行。",
+            headers: parsedResults.length > 0 ? parsedResults[0].headers : singleResult.headers,
+            rows: parsedResults.length > 0 ? parsedResults[0].rows : singleResult.rows,
+            message: singleResult.message || (parsedResults.length > 1 ? `共 ${parsedResults.length} 条查询结果` : "SQL 已执行。"),
             error: "",
+            results: parsedResults,
         };
 
         if (currentTable.value && queryTouchesCurrentTable(sql, currentTable.value)) {
@@ -659,6 +668,7 @@ async function runSql() {
             rows: [],
             message: "",
             error: getErrorMessage(error, "SQL 执行失败。"),
+            results: [],
         };
     } finally {
         loading.sql = false;
