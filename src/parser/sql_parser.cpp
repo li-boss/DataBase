@@ -190,6 +190,12 @@ std::unique_ptr<ASTNode> SqlParser::Parse(const std::string& sql) {
                 node->tbl = trimToken(token); // 表名
             }
         }
+        else if (subKeyword == "VIEW") {
+            // 解析 DROP VIEW <视图名>
+            node->type = StmtType::DROP_VIEW;
+            ss >> token;
+            node->columns.push_back(trimToken(token)); // 视图名
+        }
     }
     else if (keyword == "USE") {
         // 解析 USE <数据库名>
@@ -388,42 +394,83 @@ std::unique_ptr<ASTNode> SqlParser::Parse(const std::string& sql) {
 
         ss >> token; // 预期 SET
         if (toUpperCase(trimToken(token)) == "SET") {
-            // 读 SET 列名
-            ss >> token;
-            node->columns.push_back(toUpperCase(trimToken(token))); // set column
-            // 显式消费 '=' 号（ss >> token 会读到 '='，必须丢弃）
-            std::string eqToken;
-            if (ss >> eqToken && trimToken(eqToken) != "=") {
-                // 如果读到的不是 '='，说明 SQL 格式异常；暂不处理
+            // 循环解析 col = val 对，支持多列 SET（逗号分隔）
+            while (true) {
+                // 读 SET 列名
+                ss >> token;
+                node->columns.push_back(toUpperCase(trimToken(token))); // set column
+                // 显式消费 '=' 号（ss >> token 会读到 '='，必须丢弃）
+                std::string eqToken;
+                ss >> eqToken;
+                if (trimToken(eqToken) != "=") {
+                    // 格式异常：缺少等号，回退本次读到的列名
+                    node->columns.pop_back();
+                    break;
+                }
+                // 读 SET 值（支持带引号的字符串）
+                ss >> token;
+                // 检查原始 token 末尾逗号（trimToken 会剥离逗号，必须在此之前检查）
+                bool hasComma = false;
+                std::string raw = token;
+                // 找到最后一个非空白字符
+                size_t lastNS = raw.find_last_not_of(" \t\n\r\v\f");
+                if (lastNS != std::string::npos && raw[lastNS] == ',') {
+                    raw.erase(lastNS, 1);  // 移除逗号
+                    hasComma = true;
+                    std::cerr << "[PARSER FIX] comma detected in value token, stripped. raw='" << token << "' -> '" << raw << "'" << std::endl;
+                }
+                std::string val = trimToken(raw);
+                if ((val.front() == '\'' && val.back() == '\'') ||
+                    (val.front() == '"' && val.back() == '"')) {
+                    val = val.substr(1, val.size() - 2); // 去引号
+                }
+                node->values.push_back(val);
+
+                if (hasComma) continue; // 逗号已在 value token 尾部，继续下个 col=val
+
+                // 检查下一个 token 是否为逗号（多列 SET，逗号被空格分隔时）
+                std::streampos pos = ss.tellg();
+                std::string peekToken;
+                if (ss >> peekToken) {
+                    std::string upPeek = toUpperCase(trimToken(peekToken));
+                    if (upPeek == "WHERE" || upPeek == ";") {
+                        ss.seekg(pos);
+                        break;
+                    } else if (upPeek == "," || trimToken(peekToken) == ",") {
+                        continue;
+                    } else {
+                        ss.seekg(pos);
+                        break;
+                    }
+                } else {
+                    break;
+                }
             }
-            // 读 SET 值（支持带引号的字符串）
-            ss >> token;
-            std::string val = trimToken(token);
-            if ((val.front() == '\'' && val.back() == '\'') ||
-                (val.front() == '"' && val.back() == '"')) {
-                val = val.substr(1, val.size() - 2); // 去引号
-            }
-            node->values.push_back(val);
 
             // 可选 WHERE 子句（支持 AND / OR）
-            if (ss >> token && toUpperCase(trimToken(token)) == "WHERE") {
-                node->where.hasWhere = true;
-                SingleCondition cond;
-                if (readSingleCondition(ss, cond)) {
-                    node->where.conditions.push_back(std::move(cond));
-                }
-                while (ss >> token) {
-                    std::string logicKw = toUpperCase(trimToken(token));
-                    if (logicKw == "AND" || logicKw == "OR") {
-                        node->where.logicOps.push_back(logicKw == "AND" ? LogicOp::AND : LogicOp::OR);
-                        SingleCondition nextCond;
-                        if (readSingleCondition(ss, nextCond)) {
-                            node->where.conditions.push_back(std::move(nextCond));
+            std::cerr << "[PARSER DEBUG] SET loop done. columns=" << node->columns.size() << " values=" << node->values.size() << std::endl;
+            if (ss >> token) {
+                std::cerr << "[PARSER DEBUG] token after SET: '" << trimToken(token) << "'" << std::endl;
+                if (toUpperCase(trimToken(token)) == "WHERE") {
+                    node->where.hasWhere = true;
+                    std::cerr << "[PARSER DEBUG] WHERE matched, parsing condition..." << std::endl;
+                    SingleCondition cond;
+                    if (readSingleCondition(ss, cond)) {
+                        node->where.conditions.push_back(std::move(cond));
+                    }
+                    while (ss >> token) {
+                        std::string logicKw = toUpperCase(trimToken(token));
+                        if (logicKw == "AND" || logicKw == "OR") {
+                            node->where.logicOps.push_back(logicKw == "AND" ? LogicOp::AND : LogicOp::OR);
+                            SingleCondition nextCond;
+                            if (readSingleCondition(ss, nextCond)) {
+                                node->where.conditions.push_back(std::move(nextCond));
+                            } else {
+                                break;
+                            }
                         } else {
                             break;
                         }
-                    } else {
-                        break;
                     }
                 }
             }

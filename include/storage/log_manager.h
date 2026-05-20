@@ -22,6 +22,7 @@ public:
         CREATE_DB, DROP_DB, USE_DB,
         CREATE_TABLE, DROP_TABLE, ALTER_TABLE,
         CREATE_INDEX, DROP_INDEX,
+        CREATE_VIEW, DROP_VIEW,
         INSERT, UPDATE, DELETE, SELECT,
         BEGIN_TX, COMMIT_TX, ROLLBACK_TX,
         SYSTEM  // 系统级消息（启动/关闭等）

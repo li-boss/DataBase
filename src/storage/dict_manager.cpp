@@ -94,6 +94,9 @@ static std::string tbPath(const std::string& tableName) {
 static std::string tdfPath(const std::string& tableName) {
     return g_currentDbDir + "/" + tableName + ".tdf";
 }
+static std::string vwPath(const std::string& viewName) {
+    return g_currentDbDir + "/" + viewName + ".vw";
+}
 
 // ─── CreateDatabase ──────────────────────────────────────
 ErrorCode DictManager::CreateDatabase(const std::string& dbName) {
@@ -166,7 +169,8 @@ ErrorCode DictManager::ShowTables(std::vector<std::string>& outTables) {
     outTables.clear();
     std::error_code ec;
     for (const auto& entry : fs::directory_iterator(g_currentDbDir, ec)) {
-        if (entry.path().extension() == ".tb") {
+        auto ext = entry.path().extension().string();
+        if (ext == ".tb" || ext == ".vw") {
             outTables.push_back(entry.path().stem().string());
         }
     }
@@ -242,6 +246,33 @@ ErrorCode DictManager::loadTableHeader(const std::string& tableName,
 // ─── tableExists ─────────────────────────────────────────
 bool DictManager::tableExists(const std::string& tableName) {
     return FileManager::fileExists(tbPath(tableName));
+}
+
+// ─── viewExists ──────────────────────────────────────────
+bool DictManager::viewExists(const std::string& viewName) {
+    return FileManager::fileExists(vwPath(viewName));
+}
+
+// ─── loadView ────────────────────────────────────────────
+ErrorCode DictManager::loadView(const std::string& viewName, std::string& outQuery) {
+    const std::string path = vwPath(viewName);
+    std::ifstream ifs(path);
+    if (!ifs.is_open()) {
+        return ErrorCode::DB_ERR_FILE_NOT_FOUND;
+    }
+    // 第一行: 视图名（跳过）
+    std::string line;
+    std::getline(ifs, line);
+    // 剩余内容: SELECT 查询
+    outQuery.assign((std::istreambuf_iterator<char>(ifs)),
+                     std::istreambuf_iterator<char>());
+    // 去除首尾空白
+    outQuery.erase(0, outQuery.find_first_not_of(" \t\n\r"));
+    outQuery.erase(outQuery.find_last_not_of(" \t\n\r") + 1);
+    if (outQuery.empty()) {
+        return ErrorCode::DB_ERR_FILE_CORRUPTED;
+    }
+    return ErrorCode::DB_OK;
 }
 
 // ─── updateRecordCount ──────────────────────────────────

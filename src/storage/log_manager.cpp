@@ -84,6 +84,8 @@ const char* LogManager::opToString(OpType op) {
         case OpType::ALTER_TABLE:   return "ALTER_TABLE";
         case OpType::CREATE_INDEX:  return "CREATE_INDEX";
         case OpType::DROP_INDEX:    return "DROP_INDEX";
+        case OpType::CREATE_VIEW:   return "CREATE_VIEW";
+        case OpType::DROP_VIEW:     return "DROP_VIEW";
         case OpType::INSERT:        return "INSERT";
         case OpType::UPDATE:        return "UPDATE";
         case OpType::DELETE:        return "DELETE";

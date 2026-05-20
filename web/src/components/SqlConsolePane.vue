@@ -35,6 +35,10 @@ const props = defineProps({
             error: "",
         }),
     },
+    scriptResults: {
+        type: Array,
+        default: () => [],
+    },
 });
 
 const emit = defineEmits([
@@ -47,6 +51,7 @@ const emit = defineEmits([
 ]);
 
 const fileInput = ref(null);
+const activeScriptTab = ref("tab-1");
 
 function triggerFileUpload() {
     fileInput.value?.click();
@@ -90,6 +95,57 @@ const collapsedSummary = computed(() => {
     }
 
     return "可执行查询与命令";
+});
+
+// 标签页数据：每条 SQL 一个标签
+const scriptTabs = computed(() =>
+    props.scriptResults.map((r) => {
+        const key = `tab-${r.index}`;
+        const statusIcon = r.ok ? "✓" : "✗";
+        const statusClass = r.ok ? "tab-icon-ok" : "tab-icon-fail";
+        const sqlShort = (r.sql || "").length > 36
+            ? (r.sql || "").slice(0, 36) + "..."
+            : (r.sql || "");
+        const title = `[${r.index}] ${statusIcon} ${sqlShort}`;
+        return { key, index: r.index, title, statusIcon, statusClass, sql: r.sql || "", ok: r.ok };
+    })
+);
+
+// 当前选中标签的头部（用于表格渲染）
+const activeTabHeaders = computed(() => {
+    const tab = props.scriptResults.find((r) => `tab-${r.index}` === activeScriptTab.value);
+    return tab?.headers || [];
+});
+
+const activeTabRows = computed(() => {
+    const tab = props.scriptResults.find((r) => `tab-${r.index}` === activeScriptTab.value);
+    return tab?.rows || [];
+});
+
+const activeTabColumns = computed(() =>
+    activeTabHeaders.value.map((header) => ({
+        title: header,
+        dataIndex: header,
+        key: header,
+        ellipsis: true,
+    }))
+);
+
+const activeTabDataSource = computed(() =>
+    activeTabRows.value.map((row, rowIndex) => {
+        const record = { key: `script-row-${rowIndex}` };
+        activeTabHeaders.value.forEach((header, headerIndex) => {
+            record[header] = row[headerIndex] ?? "";
+        });
+        return record;
+    })
+);
+
+// 当前标签的 msg 或 error
+const activeTabMessage = computed(() => {
+    const tab = props.scriptResults.find((r) => `tab-${r.index}` === activeScriptTab.value);
+    if (!tab) return "";
+    return tab.ok ? (tab.msg || "OK") : (tab.error || "FAIL");
 });
 </script>
 
@@ -193,15 +249,69 @@ const collapsedSummary = computed(() => {
             />
 
             <a-alert
-                v-else-if="result.message"
+                v-else-if="result.message && !scriptResults.length"
                 type="success"
                 show-icon
                 :message="result.message"
                 class="pane-alert"
             />
 
+            <!-- 脚本标签页展示 -->
+            <div v-if="scriptResults.length" class="script-tabs-wrapper">
+                <a-tabs
+                    v-model:activeKey="activeScriptTab"
+                    size="small"
+                    type="card"
+                    class="script-tabs"
+                >
+                    <a-tab-pane
+                        v-for="tab in scriptTabs"
+                        :key="tab.key"
+                    >
+                        <template #tab>
+                            <span :class="tab.statusClass">
+                                {{ tab.title }}
+                            </span>
+                        </template>
+
+                        <div class="tab-content">
+                            <div class="tab-sql-text">
+                                <span class="tab-sql-label">SQL：</span>
+                                <code>{{ tab.sql }}</code>
+                            </div>
+
+                            <a-alert
+                                v-if="!tab.ok"
+                                type="error"
+                                show-icon
+                                :message="activeTabMessage"
+                                class="pane-alert"
+                            />
+
+                            <a-alert
+                                v-else-if="!activeTabHeaders.length"
+                                type="success"
+                                show-icon
+                                :message="activeTabMessage"
+                                class="pane-alert"
+                            />
+
+                            <a-table
+                                v-if="tab.ok && activeTabHeaders.length"
+                                size="small"
+                                :columns="activeTabColumns"
+                                :data-source="activeTabDataSource"
+                                :pagination="false"
+                                :scroll="{ y: 200, x: 'max-content' }"
+                                class="tight-table"
+                            />
+                        </div>
+                    </a-tab-pane>
+                </a-tabs>
+            </div>
+
             <a-table
-                v-if="result.headers.length"
+                v-else-if="result.headers.length"
                 size="small"
                 :columns="resultColumns"
                 :data-source="resultSource"

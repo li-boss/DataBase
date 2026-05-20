@@ -22,6 +22,7 @@ enum class StmtType {
     UPDATE,
     DELETE,
     CREATE_VIEW,
+    DROP_VIEW,
     UNKNOWN
 };
 

@@ -21,6 +21,7 @@ public:
     static ExecuteResult executeDropIndex(const ASTNode* ast);
     static ExecuteResult executeShowIndexes(const ASTNode* ast);
     static ExecuteResult executeCreateView(const ASTNode* ast);
+    static ExecuteResult executeDropView(const ASTNode* ast);
     
     // 依据任务清单新增的库级别接口
     static ExecuteResult createDatabase(const ASTNode* ast);

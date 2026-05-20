@@ -17,6 +17,8 @@
 #include <fstream>
 #include <filesystem>
 
+#include "parser/sql_parser.h"
+
 namespace fs = std::filesystem;
 
 // 辅助：将字符串转为布尔值
@@ -314,6 +316,25 @@ ExecuteResult DMLExecutor::selectRecord(const ASTNode* ast) {
     res.headers = {"system_id", "status"};
     res.rows.push_back({"1001", "RUANKO_STUB_WORKING"});
 #else
+    // ── 0. 视图拦截：如果表名对应的是视图，展开为底层查询 ──
+    if (DictManager::viewExists(ast->tbl)) {
+        std::string viewQuery;
+        ErrorCode viewErr = DictManager::loadView(ast->tbl, viewQuery);
+        if (viewErr != ErrorCode::DB_OK) {
+            res.error = 1;
+            res.msg = "Error: " + std::string(getErrorMessage(viewErr));
+            return res;
+        }
+        // 把底层 SELECT 语句作为新 SQL 重新解析并执行
+        auto viewAst = SqlParser::Parse(viewQuery);
+        if (!viewAst || viewAst->type != StmtType::SELECT) {
+            res.error = 1;
+            res.msg = "Error: View '" + ast->tbl + "' contains invalid SELECT statement.";
+            return res;
+        }
+        return selectRecord(viewAst.get());  // 递归执行底层 SELECT
+    }
+
     TableHeader header;
     std::vector<ColumnDef> fields;
     ErrorCode err = DictManager::loadTable(ast->tbl, header, fields);
@@ -595,16 +616,23 @@ ExecuteResult DMLExecutor::updateRecord(const ASTNode* ast) {
     ErrorCode err = DictManager::loadTable(ast->tbl, header, fields);
     if (err != ErrorCode::DB_OK) { res.error = 1; res.msg = "Error: Table not found."; return res; }
 
-    int setColIndex = -1;
-    std::string upperCol = ast->columns[0];
-    for (auto& c : upperCol) c = std::toupper(c);
-    for (size_t i = 0; i < fields.size(); ++i) {
-        std::string fieldNameStr = fields[i].fieldName;
-        for (auto& c : fieldNameStr) c = std::toupper(c);
-        if (fieldNameStr == upperCol) { setColIndex = static_cast<int>(i); break; }
+    // 解析所有 SET 列（支持多列更新）
+    struct SetColInfo { int index; DataType type; };
+    std::vector<SetColInfo> setCols;
+    for (size_t ci = 0; ci < ast->columns.size() && ci < ast->values.size(); ++ci) {
+        SetColInfo sci;
+        sci.index = -1;
+        sci.type = DataType::TYPE_INT;
+        std::string upperCol = ast->columns[ci];
+        for (auto& c : upperCol) c = std::toupper(c);
+        for (size_t i = 0; i < fields.size(); ++i) {
+            std::string fieldNameStr = fields[i].fieldName;
+            for (auto& c : fieldNameStr) c = std::toupper(c);
+            if (fieldNameStr == upperCol) { sci.index = static_cast<int>(i); sci.type = fields[i].type; break; }
+        }
+        if (sci.index < 0) { res.error = 1; res.msg = "Error: Unknown column '" + ast->columns[ci] + "'."; return res; }
+        setCols.push_back(sci);
     }
-    if (setColIndex < 0) { res.error = 1; res.msg = "Error: Unknown column '" + ast->columns[0] + "'."; return res; }
-    DataType setColType = fields[setColIndex].type;
 
     std::string trdFile = DictManager::GetCurrentDB() + "/" + ast->tbl + ".trd";
     int fd;
@@ -629,12 +657,56 @@ ExecuteResult DMLExecutor::updateRecord(const ASTNode* ast) {
             std::vector<char> oldRecord(header.recordSize, 0);
             std::memcpy(oldRecord.data(), rp, header.recordSize);
 
-            switch (setColType) {
-                case DataType::TYPE_INT: { int32_t val = 0; try { val = std::stoi(ast->values[0]); } catch(...) {} std::memcpy(rp + fields[setColIndex].offset, &val, 4); break; }
-                case DataType::TYPE_FLOAT: { float val = 0.0f; try { val = std::stof(ast->values[0]); } catch(...) {} std::memcpy(rp + fields[setColIndex].offset, &val, 4); break; }
-                case DataType::TYPE_DOUBLE: { double val = 0.0; try { val = std::stod(ast->values[0]); } catch(...) {} std::memcpy(rp + fields[setColIndex].offset, &val, 8); break; }
-                case DataType::TYPE_BOOLEAN: { uint8_t bval = parseBool(ast->values[0]) ? 1 : 0; *(rp + fields[setColIndex].offset) = bval; break; }
-                default: { std::strncpy(rp + fields[setColIndex].offset, ast->values[0].c_str(), fields[setColIndex].length - 1); rp[fields[setColIndex].offset + fields[setColIndex].length - 1] = '\0'; break; }
+            // 逐列写入
+            for (size_t ci = 0; ci < setCols.size(); ++ci) {
+                const auto& sc = setCols[ci];
+                char* dest = rp + fields[sc.index].offset;
+                switch (sc.type) {
+                    case DataType::TYPE_INT: {
+                        int32_t val = 0;
+                        try { val = std::stoi(ast->values[ci]); }
+                        catch (...) {
+                            res.error = 1;
+                            res.msg = "Error: Invalid integer value '" + ast->values[ci] + "' for column '" + ast->columns[ci] + "'. Expressions not yet supported.";
+                            BufferPool::ReleasePage(fd, pid);
+                            FileManager::CloseFile(fd);
+                            return res;
+                        }
+                        std::memcpy(dest, &val, 4); break;
+                    }
+                    case DataType::TYPE_FLOAT: {
+                        float val = 0.0f;
+                        try { val = std::stof(ast->values[ci]); }
+                        catch (...) {
+                            res.error = 1;
+                            res.msg = "Error: Invalid float value '" + ast->values[ci] + "' for column '" + ast->columns[ci] + "'. Expressions not yet supported.";
+                            BufferPool::ReleasePage(fd, pid);
+                            FileManager::CloseFile(fd);
+                            return res;
+                        }
+                        std::memcpy(dest, &val, 4); break;
+                    }
+                    case DataType::TYPE_DOUBLE: {
+                        double val = 0.0;
+                        try { val = std::stod(ast->values[ci]); }
+                        catch (...) {
+                            res.error = 1;
+                            res.msg = "Error: Invalid double value '" + ast->values[ci] + "' for column '" + ast->columns[ci] + "'. Expressions not yet supported.";
+                            BufferPool::ReleasePage(fd, pid);
+                            FileManager::CloseFile(fd);
+                            return res;
+                        }
+                        std::memcpy(dest, &val, 8); break;
+                    }
+                    case DataType::TYPE_BOOLEAN: {
+                        uint8_t bval = parseBool(ast->values[ci]) ? 1 : 0;
+                        *dest = bval; break;
+                    }
+                    default: {
+                        std::strncpy(dest, ast->values[ci].c_str(), fields[sc.index].length - 1);
+                        dest[fields[sc.index].length - 1] = '\0'; break;
+                    }
+                }
             }
             std::vector<char> newRecord(header.recordSize, 0);
             std::memcpy(newRecord.data(), rp, header.recordSize);

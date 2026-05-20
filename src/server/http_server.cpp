@@ -635,6 +635,9 @@ void HttpServer::Start(int port) {
                 failCount++;
             } else {
                 entry["msg"] = r.value("msg", "");
+                // 透传 SELECT 查询结果数据给前端做标签页展示
+                if (r.contains("headers")) entry["headers"] = r["headers"];
+                if (r.contains("rows")) entry["rows"] = r["rows"];
                 okCount++;
             }
             results.push_back(entry);

@@ -482,3 +482,68 @@ select {
         flex-wrap: wrap;
     }
 }
+
+/* 脚本标签页展示 */
+.script-tabs-wrapper {
+    margin-top: 8px;
+}
+
+.script-tabs {
+    margin-top: 0;
+}
+
+.script-tabs .ant-tabs-nav {
+    margin-bottom: 6px;
+}
+
+.script-tabs .ant-tabs-tab {
+    padding: 2px 10px;
+    font-size: 11px;
+    border-radius: 6px 6px 0 0;
+    background: #f0f2f5;
+    border: 1px solid #e0e3e8;
+    transition: background 0.15s;
+}
+
+.script-tabs .ant-tabs-tab-active {
+    background: #fff;
+    border-bottom-color: #fff;
+}
+
+.script-tabs .ant-tabs-tab:hover {
+    color: #1668dc;
+}
+
+.tab-icon-ok {
+    color: #52c41a;
+}
+
+.tab-icon-fail {
+    color: #ff4d4f;
+}
+
+.tab-content {
+    padding: 8px 0 0;
+}
+
+.tab-sql-text {
+    margin-bottom: 8px;
+    padding: 6px 10px;
+    background: #f8fafc;
+    border: 1px solid #e8ecf1;
+    border-radius: 6px;
+    font-size: 12px;
+}
+
+.tab-sql-label {
+    color: #94a3b8;
+    font-size: 11px;
+    margin-right: 4px;
+}
+
+.tab-sql-text code {
+    color: #1e293b;
+    font-family: "Consolas", "Monaco", monospace;
+    font-size: 12px;
+    word-break: break-all;
+}

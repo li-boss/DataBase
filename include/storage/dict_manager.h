@@ -101,6 +101,19 @@ public:
      */
     static bool tableExists(const std::string& tableName);
 
+    /**
+     * @brief 检查视图是否已存在（通过 .vw 文件判断）
+     */
+    static bool viewExists(const std::string& viewName);
+
+    /**
+     * @brief 加载视图定义（读取 .vw 文件，返回 SELECT 查询文本）
+     * @param viewName   视图名
+     * @param outQuery   输出：视图对应的 SELECT 查询
+     * @return ErrorCode
+     */
+    static ErrorCode loadView(const std::string& viewName, std::string& outQuery);
+
     // ─── 元数据更新 ──────────────────────────────────────
 
     /**

@@ -3,6 +3,7 @@
 #include "../../include/storage/dict_manager.h"
 #include "../../include/storage/file_manager.h"
 #include "../../include/storage/log_manager.h"
+#include "../../include/storage/buffer_pool.h"
 #include "../../include/common/db_structs.h"
 #include "../../include/common/db_errors.h"
 
@@ -35,6 +36,9 @@ ErrorCode TransactionManager::begin(const std::string& tableName) {
     std::vector<ColumnDef> fields;
     ErrorCode err = DictManager::loadTable(tableName, hdr, fields);
     if (err != ErrorCode::DB_OK) return err;
+
+    // 刷盘：确保 INSERT/UPDATE 写入 BufferPool 的数据已落盘，快照才不会读到空页
+    BufferPool::flushAll();
 
     // 读取 .trd 文件快照
     std::string trdFile = dbDir + "/" + tableName + ".trd";
@@ -136,6 +140,9 @@ ErrorCode TransactionManager::rollback() {
             }
         }
         FileManager::CloseFile(fd);
+
+        // 驱逐 BufferPool 中该表的所有缓存页，确保后续查询读到恢复后的磁盘数据
+        BufferPool::InvalidateFile(trdFile);
     }
 
     // 恢复 recordCount

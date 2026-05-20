@@ -575,6 +575,69 @@ ExecuteResult DDLExecutor::executeShowIndexes(const ASTNode* ast) {
 
 ExecuteResult DDLExecutor::executeCreateView(const ASTNode* ast) {
     ExecuteResult res;
-    res.msg = "Query OK: View '" + ast->columns[0] + "' created as '" + ast->values[0] + "' (Stub).";
+    std::string viewName = ast->columns[0];
+    std::string selectQuery = ast->values[0];
+
+    // ── 校验 ──
+    if (g_currentDbDir.empty()) {
+        res.error = 1;
+        res.msg = "Error: No database selected.";
+        return res;
+    }
+    if (DictManager::tableExists(viewName)) {
+        res.error = 1;
+        res.msg = "Error: Table '" + viewName + "' already exists — cannot create view with same name.";
+        return res;
+    }
+    if (DictManager::viewExists(viewName)) {
+        res.error = 1;
+        res.msg = "Error: View '" + viewName + "' already exists.";
+        return res;
+    }
+    if (selectQuery.empty()) {
+        res.error = 1;
+        res.msg = "Error: Empty AS clause for view '" + viewName + "'.";
+        return res;
+    }
+
+    // ── 写入 .vw 文件 ──
+    std::string vwFile = g_currentDbDir + "/" + viewName + ".vw";
+    std::ofstream ofs(vwFile, std::ios::binary);
+    if (!ofs.is_open()) {
+        res.error = 1;
+        res.msg = "Error: Cannot create view file: " + vwFile;
+        return res;
+    }
+    ofs << viewName << "\n" << selectQuery;
+    ofs.close();
+
+    res.msg = "Query OK: View '" + viewName + "' created.";
+    return res;
+}
+
+ExecuteResult DDLExecutor::executeDropView(const ASTNode* ast) {
+    ExecuteResult res;
+    std::string viewName = ast->columns[0];
+
+    std::string g_currentDbDir = DictManager::GetCurrentDB();
+    if (g_currentDbDir.empty()) {
+        res.error = 1;
+        res.msg = "Error: No database selected.";
+        return res;
+    }
+    if (!DictManager::viewExists(viewName)) {
+        res.error = 1;
+        res.msg = "Error: View '" + viewName + "' does not exist.";
+        return res;
+    }
+
+    std::string vwFile = g_currentDbDir + "/" + viewName + ".vw";
+    if (!FileManager::deleteFile(vwFile)) {
+        res.error = 1;
+        res.msg = "Error: Failed to delete view file: " + vwFile;
+        return res;
+    }
+
+    res.msg = "Query OK: View '" + viewName + "' dropped.";
     return res;
 }

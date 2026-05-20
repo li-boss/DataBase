@@ -58,6 +58,7 @@ const sqlResult = ref({
     message: "",
     error: "",
 });
+const scriptResults = ref([]);  // 脚本执行的每一条 SQL 结果，供标签页展示
 const tableBuilderOpen = ref(false);
 const committingCells = ref(new Set());
 const sqlPanelHeight = ref(SQL_PANEL_COLLAPSED_HEIGHT);
@@ -680,24 +681,14 @@ async function runScriptFile(file) {
 
         const payload = await api.runScript(text);
 
-        // 构建脚本执行结果展示
-        const scriptMsg = payload.msg || "";
-        const details = (payload.results || [])
-            .map((r) => {
-                const status = r.ok ? "✓" : "✗";
-                return `${status} [${r.index}/${payload.total}] ${r.sql} → ${r.ok ? (r.msg || "OK") : (r.error || "FAIL")}`;
-            })
-            .join("\n");
+        // 存每条 SQL 的完整结果给标签页展示
+        scriptResults.value = payload.results || [];
 
+        // 设置汇总消息
         sqlResult.value = {
-            headers: ["序号", "状态", "SQL 语句", "结果"],
-            rows: (payload.results || []).map((r) => [
-                String(r.index),
-                r.ok ? "成功" : "失败",
-                r.sql || "",
-                r.ok ? (r.msg || "OK") : (r.error || "FAIL"),
-            ]),
-            message: `${scriptMsg}\n\n${details}`,
+            headers: [],
+            rows: [],
+            message: `${payload.okCount} 成功, ${payload.failCount} 失败`,
             error: payload.failCount > 0 ? `${payload.failCount} 条失败` : "",
         };
 
@@ -881,6 +872,7 @@ async function runScriptFile(file) {
                             :loading="loading.sql"
                             :script-loading="loading.script"
                             :result="sqlResult"
+                            :script-results="scriptResults"
                             :expanded="sqlPanelExpanded"
                             :panel-height="sqlPanelHeight"
                             @run="runSql"

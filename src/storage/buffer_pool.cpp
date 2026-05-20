@@ -223,6 +223,32 @@ void BufferPool::flushAll() {
     }
 }
 
+void BufferPool::InvalidateFile(const std::string& filepath) {
+    using namespace BPNamespace;
+    if (!g_init) return;
+    // 第一遍：标记该文件所有页为无效
+    for (uint32_t i = 0; i < g_count; ++i) {
+        if (g_pool[i].valid && g_pool[i].filepath == filepath) {
+            g_pool[i].valid = false;
+            g_pool[i].dirty = false;
+            g_pool[i].pinCount = 0;
+            ++g_evictions;
+        }
+    }
+    // 第二遍：压实——有效页左移，收窄 g_count
+    uint32_t oldCount = g_count;
+    uint32_t write = 0;
+    for (uint32_t i = 0; i < oldCount; ++i) {
+        if (g_pool[i].valid)
+            g_pool[write++] = g_pool[i];
+    }
+    // 第三遍：清除尾部残留（bp_find 搜索整个 g_capacity，不能留 valid=true 的过期副本）
+    for (uint32_t i = write; i < oldCount; ++i) {
+        g_pool[i].valid = false;
+    }
+    g_count = write;
+}
+
 ErrorCode BufferPool::unpin(const std::string& fp, uint32_t pid) {
     using namespace BPNamespace;
     if (!g_init) return ErrorCode::DB_INVALID_PARAM;

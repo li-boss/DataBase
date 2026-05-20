@@ -86,6 +86,11 @@ public:
 
     static void flushAll();
 
+    /**
+     * @brief 驱逐指定文件的所有缓存页（用于 ROLLBACK / DROP 后强制重新读盘）
+     */
+    static void InvalidateFile(const std::string& filepath);
+
     static ErrorCode unpin(const std::string& filepath, uint32_t pageId);
 
     // ─── 工具 ────────────────────────────────────────────

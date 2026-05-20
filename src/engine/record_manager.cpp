@@ -185,8 +185,20 @@ ExecuteResult RecordManager::Execute(const ASTNode* ast) {
                 r.error ? LogManager::Level::ERROR : LogManager::Level::INFO);
             return r;
         }
-        case StmtType::CREATE_VIEW:
-            return DDLExecutor::executeCreateView(ast);
+        case StmtType::CREATE_VIEW: {
+            auto r = DDLExecutor::executeCreateView(ast);
+            LogManager::log(LogManager::OpType::CREATE_VIEW,
+                "view=" + ast->columns[0] + (r.error ? " FAILED" : " OK"),
+                r.error ? LogManager::Level::ERROR : LogManager::Level::INFO);
+            return r;
+        }
+        case StmtType::DROP_VIEW: {
+            auto r = DDLExecutor::executeDropView(ast);
+            LogManager::log(LogManager::OpType::DROP_VIEW,
+                "view=" + ast->columns[0] + (r.error ? " FAILED" : " OK"),
+                r.error ? LogManager::Level::ERROR : LogManager::Level::INFO);
+            return r;
+        }
         default: {
             ExecuteResult res;
             res.error = 1;
