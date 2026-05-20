@@ -113,6 +113,7 @@ public:
     // ─── filepath-based 接口（内部使用）──────────────────
 
     static bool createFile(const std::string& filepath);
+    static bool truncateFile(const std::string& filepath);
     static bool deleteFile(const std::string& filepath);
     static bool fileExists(const std::string& filepath);
 

@@ -105,6 +105,11 @@ bool FileManager::createFile(const std::string& filepath) {
     return ofs.is_open();
 }
 
+bool FileManager::truncateFile(const std::string& filepath) {
+    std::ofstream ofs(filepath, std::ios::binary | std::ios::trunc);
+    return ofs.is_open();
+}
+
 bool FileManager::deleteFile(const std::string& filepath) {
     std::error_code ec;
     return fs::remove(filepath, ec);

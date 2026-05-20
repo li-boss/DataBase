@@ -8,6 +8,7 @@
 #include <sstream>
 #include <cstring>
 #include <ctime>
+#include <unordered_set>
 
 extern std::string g_currentDbDir;
 
@@ -306,7 +307,7 @@ static uint32_t recalcOffsets(std::vector<ColumnDef>& fields) {
 // 辅助：从 .trd 中读取全部记录到内存（每条记录是 raw bytes）
 static bool readAllRecords(const std::string& trdPath, uint32_t recordSize, uint32_t recordCount,
                             std::vector<std::vector<uint8_t>>& outRecords) {
-    int fd;
+    int fd = 0;
     if (!FileManager::OpenFile(trdPath, "r", fd)) return false;
 
     if (recordCount == 0) { FileManager::CloseFile(fd); return true; }
@@ -334,26 +335,43 @@ static bool readAllRecords(const std::string& trdPath, uint32_t recordSize, uint
 // 辅助：将记录写入 .trd（覆盖式）
 static bool writeAllRecords(const std::string& trdPath, uint32_t newRecordSize,
                              const std::vector<std::vector<uint8_t>>& records) {
-    int fd;
-    if (!FileManager::OpenFile(trdPath, "rw", fd)) return false;
+    // 先截断文件，清空旧数据
+    if (!FileManager::truncateFile(trdPath)) return false;
 
-    // 清空文件：先 truncate 再写
-    FileManager::CloseFile(fd);
-    // 重新打开以清空
-    // 简单方案：逐页写入
+    // 逐页写入新数据
+    int fd = 0;
     if (!FileManager::OpenFile(trdPath, "rw", fd)) return false;
 
     uint32_t rpp = 4080 / newRecordSize; if (!rpp) rpp = 1;
+    std::unordered_set<uint32_t> initializedPages;
 
     for (size_t i = 0; i < records.size(); ++i) {
         uint32_t pid = static_cast<uint32_t>(i) / rpp;
         uint32_t offset = (static_cast<uint32_t>(i) % rpp) * newRecordSize;
 
         void* pageData = BufferPool::GetPage(fd, pid);
-        if (!pageData) continue;
+        if (!pageData) {
+            char blankPage[PAGE_SIZE] = {0};
+            if (!FileManager::WritePage(fd, pid, blankPage)) {
+                FileManager::CloseFile(fd);
+                return false;
+            }
+            pageData = BufferPool::GetPage(fd, pid);
+        }
+        if (!pageData) {
+            FileManager::CloseFile(fd);
+            return false;
+        }
+
+        if (initializedPages.insert(pid).second) {
+            std::memset(pageData, 0, PAGE_SIZE - sizeof(PageHeader));
+        }
         std::memcpy(static_cast<char*>(pageData) + offset, records[i].data(), newRecordSize);
         BufferPool::MarkDirty(fd, pid);
         BufferPool::ReleasePage(fd, pid);
+    }
+    for (uint32_t pid : initializedPages) {
+        BufferPool::FlushPage(fd, pid);
     }
     FileManager::CloseFile(fd);
     return true;
@@ -479,9 +497,9 @@ ExecuteResult DDLExecutor::executeAlterTable(const ASTNode* ast) {
         std::vector<uint8_t> newRec(newRecordSize, 0);
 
         for (size_t ni = 0; ni < newFields.size(); ++ni) {
-            // 在旧字段中查找同名字段
+            // 在旧字段中查找同名字段（必须用 strcmp 比较 char[] 内容，== 只比较指针地址）
             for (size_t oi = 0; oi < oldFields.size(); ++oi) {
-                if (newFields[ni].fieldName == oldFields[oi].fieldName) {
+                if (std::strcmp(newFields[ni].fieldName, oldFields[oi].fieldName) == 0) {
                     // 复制数据（取 min(新旧长度) 字节）
                     uint32_t copyLen = std::min(newFields[ni].length, oldFields[oi].length);
                     if (newFields[ni].offset + copyLen <= newRecordSize &&
@@ -505,7 +523,7 @@ ExecuteResult DDLExecutor::executeAlterTable(const ASTNode* ast) {
 
     // 写回 .tdf（新字段定义列表）
     {
-        int tdfFd;
+        FileManager::truncateFile(tdfFile);
         // 清除旧的 tdf 内容，重新写入
         FileManager::createFile(tdfFile); // 覆盖创建
         uint32_t tdfOff = 0;

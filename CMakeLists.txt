@@ -105,3 +105,7 @@ add_test(NAME Engine_Script_Test COMMAND test_script)
 add_executable(test_parser tests/test_parser.cpp)
 target_link_libraries(test_parser PRIVATE RuankoCore)
 add_test(NAME Parser_Unit_Test COMMAND test_parser)
+
+add_executable(test_alter_drop_column tests/test_alter_drop_column.cpp)
+target_link_libraries(test_alter_drop_column PRIVATE RuankoCore)
+add_test(NAME Engine_AlterDropColumn_Test COMMAND test_alter_drop_column)
