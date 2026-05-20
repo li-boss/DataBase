@@ -35,6 +35,17 @@ static void onSignal(int sig) {
         g_server->stop();  // 使 svr.listen() 返回
     }
 }
+// UTF-8 安全截断：确保不会在多字节字符中间截断
+static std::string safeUtf8Truncate(const std::string& s, size_t maxBytes) {
+    if (s.length() <= maxBytes) return s;
+    size_t pos = maxBytes;
+    // 回退到非 continuation byte (0x80-0xBF) 的位置
+    while (pos > 0 && (static_cast<unsigned char>(s[pos]) & 0xC0) == 0x80) {
+        --pos;
+    }
+    return s.substr(0, pos) + "...";
+}
+
 static std::vector<std::string> splitStatements(const std::string& script) {
     std::vector<std::string> statements;
     std::string cleaned;
@@ -615,7 +626,7 @@ void HttpServer::Start(int port) {
             json entry;
             entry["index"] = i + 1;
             entry["sql"] = statements[i].length() > 80
-                               ? statements[i].substr(0, 77) + "..."
+                               ? safeUtf8Truncate(statements[i], 77)
                                : statements[i];
             entry["ok"] = r.value("ok", false);
 
