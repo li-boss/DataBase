@@ -19,6 +19,74 @@ static std::map<std::string, IndexHeader> g_indexCache;  // key: indexName
 // 前向声明
 static void forEachIndex(std::function<void(const IndexHeader&)> visitor);
 
+static fs::path databaseRootPath() {
+    std::error_code ec;
+    fs::path dir = fs::current_path(ec);
+    if (ec) {
+        return ".";
+    }
+
+    while (!dir.empty()) {
+        if (fs::exists(dir / "CMakeLists.txt") &&
+            fs::is_directory(dir / "src") &&
+            fs::is_directory(dir / "include")) {
+            return dir;
+        }
+
+        fs::path parent = dir.parent_path();
+        if (parent == dir) {
+            break;
+        }
+        dir = parent;
+    }
+
+    return fs::current_path(ec);
+}
+
+static fs::path databasePathFor(const std::string& dbName) {
+    fs::path requested(dbName);
+    if (requested.is_absolute()) {
+        return requested;
+    }
+    return databaseRootPath() / requested;
+}
+
+static fs::path resolveDatabasePath(const std::string& dbName) {
+    fs::path requested(dbName);
+    if (requested.is_absolute()) {
+        if (fs::exists(requested) && fs::is_directory(requested)) {
+            return requested;
+        }
+        return {};
+    }
+
+    fs::path rooted = databasePathFor(dbName);
+    if (fs::exists(rooted) && fs::is_directory(rooted)) {
+        return rooted;
+    }
+
+    std::error_code ec;
+    fs::path dir = fs::current_path(ec);
+    if (ec) {
+        return {};
+    }
+
+    while (!dir.empty()) {
+        fs::path candidate = dir / requested;
+        if (fs::exists(candidate) && fs::is_directory(candidate)) {
+            return candidate;
+        }
+
+        fs::path parent = dir.parent_path();
+        if (parent == dir) {
+            break;
+        }
+        dir = parent;
+    }
+
+    return {};
+}
+
 // ─── 辅助：生成 .tb / .tdf 文件路径 ──────────────────────
 static std::string tbPath(const std::string& tableName) {
     return g_currentDbDir + "/" + tableName + ".tb";
@@ -30,13 +98,14 @@ static std::string tdfPath(const std::string& tableName) {
 // ─── CreateDatabase ──────────────────────────────────────
 ErrorCode DictManager::CreateDatabase(const std::string& dbName) {
     std::error_code ec;
-    fs::create_directories(dbName, ec);
+    fs::path dbPath = databasePathFor(dbName);
+    fs::create_directories(dbPath, ec);
     if (ec) {
         std::cerr << "[DictMgr] CreateDatabase failed: " << ec.message() << "\n";
         return ErrorCode::DB_ERR_FILE_WRITE_FAILED;
     }
     // 写入系统元文件 ruanko.db（SysDBRecord）
-    const std::string metaPath = dbName + "/ruanko.db";
+    const std::string metaPath = (dbPath / "ruanko.db").string();
     if (!FileManager::fileExists(metaPath)) {
         SysDBRecord rec{};
         std::strncpy(rec.dbName, dbName.c_str(), MAX_NAME_LEN - 1);
@@ -51,13 +120,14 @@ ErrorCode DictManager::CreateDatabase(const std::string& dbName) {
 // ─── DropDatabase ────────────────────────────────────────
 ErrorCode DictManager::DropDatabase(const std::string& dbName) {
     std::error_code ec;
-    fs::remove_all(dbName, ec);
+    fs::path dbPath = databasePathFor(dbName);
+    fs::remove_all(dbPath, ec);
     if (ec) {
         std::cerr << "[DictMgr] DropDatabase failed: " << ec.message() << "\n";
         return ErrorCode::DB_ERR_FILE_WRITE_FAILED;
     }
     // 若当前 db 就是被删除的，复位到当前目录
-    if (g_currentDbDir == dbName) {
+    if (g_currentDbDir == dbPath.string()) {
         g_currentDbDir = ".";
     }
     return ErrorCode::DB_OK;
@@ -65,10 +135,11 @@ ErrorCode DictManager::DropDatabase(const std::string& dbName) {
 
 // ─── UseDatabase ─────────────────────────────────────────
 ErrorCode DictManager::UseDatabase(const std::string& dbName) {
-    if (!fs::exists(dbName)) {
+    fs::path dbPath = resolveDatabasePath(dbName);
+    if (dbPath.empty()) {
         return ErrorCode::DB_ERR_DB_NOT_FOUND;
     }
-    g_currentDbDir = dbName;
+    g_currentDbDir = dbPath.string();
 
     // 预加载该库所有索引元数据到内存缓存
     g_indexCache.clear();
@@ -77,13 +148,17 @@ ErrorCode DictManager::UseDatabase(const std::string& dbName) {
     });
 
     std::cerr << "[DictMgr] Loaded " << g_indexCache.size()
-              << " indexes from database: " << dbName << "\n";
+              << " indexes from database: " << g_currentDbDir << "\n";
     return ErrorCode::DB_OK;
 }
 
 // ─── GetCurrentDB ─────────────────────────────────────────
 std::string DictManager::GetCurrentDB() {
     return g_currentDbDir;
+}
+
+std::string DictManager::GetDatabaseRoot() {
+    return databaseRootPath().string();
 }
 
 // ─── ShowTables ──────────────────────────────────────────

@@ -60,6 +60,8 @@ public:
      */
     static std::string GetCurrentDB();
 
+    static std::string GetDatabaseRoot();
+
     // ─── 核心查询 ────────────────────────────────────────
 
     /**

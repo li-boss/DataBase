@@ -151,7 +151,7 @@ void HttpServer::Start(int port) {
         json j;
         j["ok"] = true;
         std::vector<std::string> dbs;
-        for (const auto& entry : std::filesystem::directory_iterator(".")) {
+        for (const auto& entry : std::filesystem::directory_iterator(DictManager::GetDatabaseRoot())) {
             if (entry.is_directory()) {
                 std::string metaFile = entry.path().string() + "/ruanko.db";
                 if (std::filesystem::exists(metaFile)) {
