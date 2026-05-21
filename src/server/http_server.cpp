@@ -287,6 +287,24 @@ void HttpServer::Start(int port) {
                 cols.push_back(col);
             }
             j["columns"] = cols;
+        } else if (DictManager::viewExists(table)) {
+            json result = ExecSql("SELECT * FROM " + table + ";");
+            if (result["ok"] == true && result.contains("headers")) {
+                j["ok"] = true;
+                json cols = json::array();
+                for (const auto& hdr : result["headers"]) {
+                    json col;
+                    col["name"] = hdr;
+                    col["type"] = "VARCHAR";
+                    col["primaryKey"] = false;
+                    col["notNull"] = false;
+                    cols.push_back(col);
+                }
+                j["columns"] = cols;
+            } else {
+                j["ok"] = false;
+                j["error"] = "View schema unavailable";
+            }
         } else {
             j["ok"] = false;
             j["error"] = "Table not found";
@@ -568,29 +586,45 @@ void HttpServer::Start(int port) {
             return;
         }
 
-        json lastResult;
+        json allResults = json::array();
         std::string cumulativeMsg;
         int executedCount = 0;
 
         for (size_t i = 0; i < stmts.size(); ++i) {
-            lastResult = ExecSql(stmts[i] + ";");
-            if (!lastResult.value("ok", false)) {
-                j = lastResult;
+            json r = ExecSql(stmts[i] + ";");
+            if (!r.value("ok", false)) {
+                j["ok"] = false;
                 if (stmts.size() > 1) {
-                    j["error"] = "Error on statement " + std::to_string(i + 1) + ": " + lastResult.value("error", "Unknown error");
+                    j["error"] = "Error on statement " + std::to_string(i + 1) + ": " + r.value("error", "Unknown error");
+                } else {
+                    j["error"] = r.value("error", "Unknown error");
                 }
+                j["results"] = allResults;
                 res.set_content(j.dump(), "application/json");
                 return;
             }
             executedCount++;
-            std::string msg = lastResult.value("msg", "");
+            // 提取每个语句的独立结果
+            json singleResult;
+            singleResult["headers"] = r.value("headers", json::array());
+            singleResult["rows"] = r.value("rows", json::array());
+            singleResult["msg"] = r.value("msg", "");
+            allResults.push_back(singleResult);
+
+            std::string msg = r.value("msg", "");
             if (!msg.empty()) {
                 if (!cumulativeMsg.empty()) cumulativeMsg += "\n";
                 cumulativeMsg += msg;
             }
         }
 
-        j = lastResult;
+        j["ok"] = true;
+        j["results"] = allResults;
+        // 向后兼容：设置 headers/rows 为最后一个结果
+        if (!allResults.empty()) {
+            j["headers"] = allResults.back()["headers"];
+            j["rows"] = allResults.back()["rows"];
+        }
         if (stmts.size() > 1) {
             j["msg"] = "[" + std::to_string(executedCount) + " statement(s) executed successfully]\n" + cumulativeMsg;
         } else {

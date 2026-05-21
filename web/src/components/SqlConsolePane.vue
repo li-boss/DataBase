@@ -33,6 +33,7 @@ const props = defineProps({
             rows: [],
             message: "",
             error: "",
+            results: [],
         }),
     },
     scriptResults: {
@@ -81,6 +82,40 @@ const resultSource = computed(() => props.result.rows.map((row, rowIndex) => {
     return record;
 }));
 
+// 多结果集支持：返回所有查询结果（优先使用 results 数组，向后兼容单结果）
+const displayResults = computed(() => {
+    const results = props.result.results;
+    if (Array.isArray(results) && results.length > 0) {
+        return results;
+    }
+    // 单结果 fallback
+    if (props.result.headers.length > 0) {
+        return [{ headers: props.result.headers, rows: props.result.rows }];
+    }
+    return [];
+});
+
+// 给定一个结果对象，生成表格列定义
+function makeColumns(res) {
+    return (res.headers || []).map((header) => ({
+        title: header,
+        dataIndex: header,
+        key: header,
+        ellipsis: true,
+    }));
+}
+
+// 给定一个结果对象，生成表格数据源
+function makeDataSource(res, idx) {
+    return (res.rows || []).map((row, rowIndex) => {
+        const record = { key: `sql-result-${idx}-row-${rowIndex}` };
+        (res.headers || []).forEach((header, headerIndex) => {
+            record[header] = row[headerIndex] ?? "";
+        });
+        return record;
+    });
+}
+
 const collapsedSummary = computed(() => {
     if (props.result.error) {
         return "上次执行失败";
@@ -88,6 +123,12 @@ const collapsedSummary = computed(() => {
 
     if (props.result.message) {
         return props.result.message;
+    }
+
+    const results = props.result.results;
+    if (Array.isArray(results) && results.length > 1) {
+        const totalRows = results.reduce((sum, r) => sum + ((r.rows || []).length), 0);
+        return `${results.length} 条查询，共 ${totalRows} 行`;
     }
 
     if (props.currentTable) {
@@ -321,7 +362,7 @@ const activeTabMessage = computed(() => {
             />
 
             <a-empty
-                v-else
+                v-if="displayResults.length === 0 && !result.error"
                 :image="false"
                 description="执行后在这里显示结果"
             />
